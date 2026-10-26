@@ -947,6 +947,8 @@ local M = {}
 local MAX_COL = 40
 local MIN_COL = 4
 
+local ACTIONS = { label = "", actions = { { label = "View", command = "view" } } }
+
 function M.new_grid()
   return { sel = 1 }
 end
@@ -1021,6 +1023,12 @@ local function activate_row(g, opts, i)
   M.show_row(title, opts.columns, opts.rows[i])
 end
 
+local function row_command(g, opts, cmd, i)
+  if cmd == "view" then
+    activate_row(g, opts, i)
+  end
+end
+
 local function change_page(g, opts, offset)
   g.sel = 1
   opts.on_page(offset)
@@ -1061,6 +1069,8 @@ function M.grid(p, g, opts)
   end
   if count == 0 then
     cols = { { label = "" } }
+  else
+    cols[count + 1] = ACTIONS
   end
   if g.sel > #rows then
     g.sel = math.max(#rows, 1)
@@ -1074,6 +1084,7 @@ function M.grid(p, g, opts)
     empty = opts.empty or "No rows",
     on_select = U.bind(select_row, g),
     on_activate = U.bind(activate_row, g, opts),
+    on_command = U.bind(row_command, g, opts),
   })
   if opts.on_page then
     p:divider()
