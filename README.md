@@ -51,7 +51,7 @@ Opening a database that is already open switches to its tab. **SQLite: Close Dat
 |---------------|------|
 | F5 or **Run** | Run the SQL. Running again while a query runs stops it and starts over. |
 | **Cancel** | Stop the running query. Rows that already arrived stay on screen, marked **Cancelled**. Closing the tab cancels too. |
-| **View**, Enter or double-click on a row | Show every column of the row. Escape or **Close** closes it. |
+| **View** or Enter on a row | Show every column of the row. Escape or **Close** closes it. |
 | Left and Right, Shift+wheel | Scroll wide results sideways: the arrows jump a column. |
 | Tab and Shift+Tab | Move between the editor, buttons and the results. |
 
