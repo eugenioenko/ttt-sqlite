@@ -116,14 +116,13 @@ local function objects(p, db)
     return
   end
   if st.err then
-    p:label({ text = "✕ " .. U.one_line(st.err), style = "danger", margin_top = 1, padding_left = 1 })
+    UI.message(p, U.one_line(st.err), "danger", { margin_top = 1, prefix = "✕ " })
     return
   end
   section(p, db, "TABLES", object_items(st, st.tables, "t"), "No tables")
   section(p, db, "VIEWS", object_items(st, st.views, "v"), "No views")
   if db.schema == "temp" then
-    p:label({ text = "temp is empty here: every", style = "muted", margin_top = 1, padding_left = 1 })
-    p:label({ text = "query runs a new sqlite3.", style = "muted", padding_left = 1 })
+    UI.message(p, "temp is empty here: every query runs a new sqlite3.", "muted", { margin_top = 1 })
   end
 end
 
@@ -157,11 +156,11 @@ local function database(p, db)
     render = U.bind(link_list, db, { { id = "open", label = "◆ " .. db.name, badge = status } }, nil),
   })
   if db.status == "error" then
-    p:label({ text = "✕ " .. U.one_line(db.err or "Could not open"), style = "danger", padding_left = 1 })
+    UI.message(p, U.one_line(db.err or "Could not open"), "danger", { prefix = "✕ " })
     return
   end
   if db.err then
-    p:label({ text = "! " .. U.one_line(db.err), style = "warning", padding_left = 1 })
+    UI.message(p, U.one_line(db.err), "warning", { prefix = "! " })
   end
   p:hstack({ height = 1, margin_top = 1, render = U.bind(schema_row, db) })
   if db.status == "ok" then

@@ -62,7 +62,7 @@ function M.new_form(spec)
 end
 
 function M.form_height(form)
-  local h = 2
+  local h = 3
   for _, f in ipairs(form.spec.fields) do
     if shown(form, f) then
       if f.kind == "multiline" then
@@ -122,13 +122,11 @@ function M.render_form(p, form, on_cancel)
       render_field(p, form, f, i == 1)
     end
   end
-  local text, style = "", "muted"
   if form.err then
-    text, style = "✕ " .. form.err, "danger"
-  elseif form.busy then
-    text = form.spec.busy_text or "Saving…"
+    Layout.message(p, U.one_line(form.err), "danger", { rows = 2, prefix = "✕ " })
+  else
+    Layout.message(p, form.busy and (form.spec.busy_text or "Saving…") or "", "muted", { rows = 2 })
   end
-  p:label({ text = text, style = style, padding_left = 1 })
   p:hstack({ height = 1, gap = 1, align = "right", render = U.bind(buttons, form, on_cancel) })
 end
 

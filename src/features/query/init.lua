@@ -68,12 +68,7 @@ local function error_lines(p, q)
     return
   end
   for i, line in ipairs(U.lines(q.err)) do
-    p:label({
-      text = (i == 1 and "✕ " or "  ") .. line,
-      style = "danger",
-      padding_left = 1,
-      margin_top = i == 1 and 1 or 0,
-    })
+    UI.message(p, line, "danger", { prefix = i == 1 and "✕ " or "  ", margin_top = i == 1 and 1 or nil })
   end
 end
 
@@ -93,14 +88,13 @@ local function page_rows(rows, offset, limit)
   return out
 end
 
-local function grid_box(q, width, b)
+local function grid_box(q, b)
   local set = q.sets[q.active] or { columns = {}, numeric = {}, rows = {} }
   local limit = S.page_size()
   UI.grid(b, q.grid, {
     columns = set.columns,
     numeric = set.numeric,
     rows = page_rows(set.rows, q.offset, limit),
-    width = width - 2,
     offset = q.offset,
     limit = limit,
     total = #set.rows,
@@ -122,7 +116,7 @@ local function results(p, q)
   if #q.sets > 1 then
     set_tabs(p, q)
   end
-  UI.frame(p, "Results", U.bind(grid_box, q, (p:size())), { margin_top = #q.sets > 1 and 0 or 1 })
+  UI.frame(p, "Results", U.bind(grid_box, q), { margin_top = #q.sets > 1 and 0 or 1 })
 end
 
 local function render(q, p)

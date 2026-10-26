@@ -115,20 +115,18 @@ local function render(p)
     p:label({ text = "Recent", style = "muted", padding_left = 1, margin_top = 1 })
     p:box({ height = math.min(#items, 8), render = U.bind(recent_list, items) })
   end
-  local text, style = "", "muted"
   if form.err then
-    text, style = "✕ " .. U.one_line(form.err), "danger"
-  elseif form.busy then
-    text = "Opening…"
+    UI.message(p, U.one_line(form.err), "danger", { rows = 2, prefix = "✕ " })
+  else
+    UI.message(p, form.busy and "Opening…" or "", "muted", { rows = 2 })
   end
-  p:label({ text = text, style = style, padding_left = 1 })
   p:hstack({ height = 1, gap = 1, align = "right", render = buttons })
 end
 
 function M.dialog()
   form.err = nil
   form.busy = false
-  local height = 3 + 1 + 1
+  local height = 3 + 2 + 1
   if #S.recent > 0 then
     height = height + 2 + math.min(#S.recent, 8)
   end

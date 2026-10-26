@@ -226,20 +226,18 @@ local function render(p)
     p:label({ text = "Recent", style = "muted", padding_left = 1, margin_top = 1 })
     p:box({ height = math.min(#items, 8), render = U.bind(recent_list, items) })
   end
-  local text, style = "", "muted"
   if form.err then
-    text, style = "✕ " .. U.one_line(form.err), "danger"
-  elseif form.busy then
-    text = "Opening…"
+    UI.message(p, U.one_line(form.err), "danger", { rows = 2, prefix = "✕ " })
+  else
+    UI.message(p, form.busy and "Opening…" or "", "muted", { rows = 2 })
   end
-  p:label({ text = text, style = style, padding_left = 1 })
   p:hstack({ height = 1, gap = 1, align = "right", render = buttons })
 end
 
 function M.dialog()
   form.err = nil
   form.busy = false
-  local height = 3 + 1 + 1
+  local height = 3 + 2 + 1
   if #S.recent > 0 then
     height = height + 2 + math.min(#S.recent, 8)
   end
@@ -588,14 +586,13 @@ local function objects(p, db)
     return
   end
   if st.err then
-    p:label({ text = "✕ " .. U.one_line(st.err), style = "danger", margin_top = 1, padding_left = 1 })
+    UI.message(p, U.one_line(st.err), "danger", { margin_top = 1, prefix = "✕ " })
     return
   end
   section(p, db, "TABLES", object_items(st, st.tables, "t"), "No tables")
   section(p, db, "VIEWS", object_items(st, st.views, "v"), "No views")
   if db.schema == "temp" then
-    p:label({ text = "temp is empty here: every", style = "muted", margin_top = 1, padding_left = 1 })
-    p:label({ text = "query runs a new sqlite3.", style = "muted", padding_left = 1 })
+    UI.message(p, "temp is empty here: every query runs a new sqlite3.", "muted", { margin_top = 1 })
   end
 end
 
@@ -629,11 +626,11 @@ local function database(p, db)
     render = U.bind(link_list, db, { { id = "open", label = "◆ " .. db.name, badge = status } }, nil),
   })
   if db.status == "error" then
-    p:label({ text = "✕ " .. U.one_line(db.err or "Could not open"), style = "danger", padding_left = 1 })
+    UI.message(p, U.one_line(db.err or "Could not open"), "danger", { prefix = "✕ " })
     return
   end
   if db.err then
-    p:label({ text = "! " .. U.one_line(db.err), style = "warning", padding_left = 1 })
+    UI.message(p, U.one_line(db.err), "warning", { prefix = "! " })
   end
   p:hstack({ height = 1, margin_top = 1, render = U.bind(schema_row, db) })
   if db.status == "ok" then
@@ -770,7 +767,7 @@ function M.new_form(spec)
 end
 
 function M.form_height(form)
-  local h = 2
+  local h = 3
   for _, f in ipairs(form.spec.fields) do
     if shown(form, f) then
       if f.kind == "multiline" then
@@ -830,13 +827,11 @@ function M.render_form(p, form, on_cancel)
       render_field(p, form, f, i == 1)
     end
   end
-  local text, style = "", "muted"
   if form.err then
-    text, style = "✕ " .. form.err, "danger"
-  elseif form.busy then
-    text = form.spec.busy_text or "Saving…"
+    Layout.message(p, U.one_line(form.err), "danger", { rows = 2, prefix = "✕ " })
+  else
+    Layout.message(p, form.busy and (form.spec.busy_text or "Saving…") or "", "muted", { rows = 2 })
   end
-  p:label({ text = text, style = style, padding_left = 1 })
   p:hstack({ height = 1, gap = 1, align = "right", render = U.bind(buttons, form, on_cancel) })
 end
 
@@ -850,16 +845,13 @@ local S = require("core.state")
 local R = require("core.results")
 local Dialog = require("components.dialog")
 
--- A page of result rows as a table. ttt's table has no horizontal scroll, so
--- when the columns do not fit, the grid shows a window of them that [ and ]
--- (or the ‹ › buttons) move.
 local M = {}
 
 local MAX_COL = 40
 local MIN_COL = 4
 
 function M.new_grid()
-  return { sel = 1, col = 1 }
+  return { sel = 1 }
 end
 
 -- sqlite3 -json prints reals with 17 digits (864.7859999999999); the row
@@ -890,21 +882,6 @@ local function natural_widths(columns, numeric, rows)
     widths[c] = math.max(MIN_COL, math.min(w, MAX_COL))
   end
   return widths
-end
-
--- The columns from `first` that fit in avail cells, two cells apart.
-local function window(widths, first, avail)
-  local last, used = first, widths[first]
-  while last < #widths and used + 2 + widths[last + 1] <= avail do
-    last = last + 1
-    used = used + 2 + widths[last]
-  end
-  return last
-end
-
-local function shift(g, by, count)
-  g.col = math.max(1, math.min(g.col + by, count))
-  S.redraw()
 end
 
 local function select_row(g, i)
@@ -941,73 +918,45 @@ local function activate_row(g, opts, i)
   M.show_row(title, opts.columns, opts.rows[i])
 end
 
-local function grid_command(g, count, cmd, i)
-  g.sel = i or g.sel
-  if cmd == "prev_cols" then
-    shift(g, -1, count)
-  elseif cmd == "next_cols" then
-    shift(g, 1, count)
-  end
-end
-
 local function change_page(g, opts, offset)
   g.sel = 1
   opts.on_page(offset)
 end
 
-local function nav_buttons(g, first, last, count, h)
-  h:button({ label = "‹", style = "bracket", disabled = first <= 1, on_click = U.bind(shift, g, -1, count) })
-  h:label({
-    text = "Columns " .. first .. "–" .. last .. " of " .. count,
-    style = "muted",
-    width = U.width("Columns " .. first .. "–" .. last .. " of " .. count),
+local function footer(g, opts, h)
+  h:pager({
+    offset = opts.offset or 0,
+    limit = opts.limit or S.page_size(),
+    total = opts.total or #opts.rows,
+    on_change = U.bind(change_page, g, opts),
   })
-  h:button({ label = "›", style = "bracket", disabled = last >= count, on_click = U.bind(shift, g, 1, count) })
 end
 
-local function footer(g, opts, first, last, h)
-  local count = #opts.columns
-  if opts.on_page then
-    h:pager({
-      offset = opts.offset or 0,
-      limit = opts.limit or S.page_size(),
-      total = opts.total or #opts.rows,
-      on_change = U.bind(change_page, g, opts),
-    })
-  end
-  if first > 1 or last < count then
-    nav_buttons(g, first, last, count, h)
-  end
-end
-
--- opts: columns, numeric, rows (the page), width, offset, limit, total,
+-- opts: columns, numeric, rows (the page), offset, limit, total,
 -- on_page(offset), loading, empty, row_title.
 function M.grid(p, g, opts)
   local columns = opts.columns or {}
   local count = #columns
-  if g.col > count then
-    g.col = math.max(count, 1)
-  end
   local numeric = opts.numeric or {}
   local widths = natural_widths(columns, numeric, opts.rows or {})
-  local first = count > 0 and g.col or 1
-  local last = count > 0 and window(widths, first, math.max((opts.width or 80) - 3, 10)) or 0
   local cols, rows = {}, {}
-  for c = first, last do
+  for c = 1, count do
     local col = { label = columns[c], align = numeric[c] and "right" or nil }
-    if c < last or last < count then
+    if c < count then
       col.width = widths[c]
+    else
+      col.min_width = widths[c]
     end
-    cols[#cols + 1] = col
+    cols[c] = col
   end
   for r, row in ipairs(opts.rows or {}) do
     local cells = {}
-    for c = first, last do
-      cells[#cells + 1] = M.cell(row[c], numeric[c])
+    for c = 1, count do
+      cells[c] = M.cell(row[c], numeric[c])
     end
     rows[r] = cells
   end
-  if #cols == 0 then
+  if count == 0 then
     cols = { { label = "" } }
   end
   if g.sel > #rows then
@@ -1022,11 +971,11 @@ function M.grid(p, g, opts)
     empty = opts.empty or "No rows",
     on_select = U.bind(select_row, g),
     on_activate = U.bind(activate_row, g, opts),
-    key_commands = { ["["] = "prev_cols", ["]"] = "next_cols" },
-    on_command = U.bind(grid_command, g, count),
   })
-  p:divider()
-  p:hstack({ height = 1, gap = 2, align = "center", render = U.bind(footer, g, opts, first, last) })
+  if opts.on_page then
+    p:divider()
+    p:hstack({ height = 1, gap = 2, align = "center", render = U.bind(footer, g, opts) })
+  end
 end
 
 return M
@@ -1088,6 +1037,7 @@ end
 
 -- src/components/layout.lua -------------------------------------------------
 __modules["components.layout"] = function()
+local text = require("ttt.text")
 local U = require("core.util")
 
 local M = {}
@@ -1117,14 +1067,36 @@ end
 
 function M.checkbox(h, label, checked, on_change, opts)
   local spec = { label = label, checked = checked, on_change = on_change }
-  h:box(merge({ width = #label + 5, render = U.bind(checkbox_cell, spec) }, opts))
+  h:box(merge({ width = U.width(label) + 5, render = U.bind(checkbox_cell, spec) }, opts))
 end
 
 -- A button aligned with bordered inputs in the same row.
 function M.button_box(h, label, on_click, disabled, style)
   local spec = { label = label, on_click = on_click, disabled = disabled, style = style }
-  local width = #label + 2 + (style == "bracket" and 2 or 0)
+  local width = U.width(label) + 2 + (style == "bracket" and 2 or 0)
   h:box({ padding_top = 1, width = width, render = U.bind(button_cell, spec) })
+end
+
+-- Wraps msg to the panel width after opts.prefix, one label per line. With
+-- opts.rows it takes exactly that many rows, ending in "…" when cut short.
+function M.message(p, msg, style, opts)
+  opts = opts or {}
+  local prefix = opts.prefix or ""
+  local pad = string.rep(" ", U.width(prefix))
+  local width = math.max((p:size()) - 1 - #pad, 1)
+  local lines = msg == "" and { "" } or text.wrap(msg, width)
+  local rows = opts.rows or #lines
+  if #lines > rows then
+    lines[rows] = U.clip(lines[rows] .. " …", width)
+  end
+  for i = 1, rows do
+    p:label({
+      text = lines[i] and ((i == 1 and prefix or pad) .. lines[i]) or "",
+      style = style,
+      padding_left = 1,
+      margin_top = i == 1 and opts.margin_top or nil,
+    })
+  end
 end
 
 function M.kv(entries)
@@ -1838,6 +1810,8 @@ end
 
 -- src/core/util.lua ---------------------------------------------------------
 __modules["core.util"] = function()
+local text = require("ttt.text")
+
 local U = {}
 
 function U.trim(s)
@@ -1857,61 +1831,12 @@ function U.stem(path)
   return (name:gsub("%.[^%.]+$", ""))
 end
 
-local function wide(cp)
-  return (cp >= 0x1100 and cp <= 0x115F)
-    or (cp >= 0x2E80 and cp <= 0xA4CF)
-    or (cp >= 0xAC00 and cp <= 0xD7A3)
-    or (cp >= 0xF900 and cp <= 0xFAFF)
-    or (cp >= 0xFE30 and cp <= 0xFE4F)
-    or (cp >= 0xFF00 and cp <= 0xFF60)
-    or (cp >= 0xFFE0 and cp <= 0xFFE6)
-    or cp >= 0x1F300
-end
-
--- Approximate terminal columns, for sizing table columns only: ttt measures
--- and clips what it draws, so an estimate that is off just wastes a cell.
 function U.width(s)
-  s = tostring(s)
-  if not s:find("[\128-\255]") then
-    return #s
-  end
-  local n, i = 0, 1
-  while i <= #s do
-    local c = s:byte(i)
-    if c < 0x80 then
-      n = n + 1
-      i = i + 1
-    elseif c >= 0xF0 then
-      n = n + 2
-      i = i + 4
-    elseif c >= 0xE0 then
-      local cp = (c - 0xE0) * 0x1000 + ((s:byte(i + 1) or 0x80) - 0x80) * 0x40 + ((s:byte(i + 2) or 0x80) - 0x80)
-      n = n + (wide(cp) and 2 or 1)
-      i = i + 3
-    elseif c >= 0xC0 then
-      n = n + 1
-      i = i + 2
-    else
-      i = i + 1
-    end
-  end
-  return n
+  return text.width(tostring(s))
 end
 
 function U.clip(s, n)
-  s = tostring(s)
-  if U.width(s) <= n then
-    return s
-  end
-  local out, count, i = {}, 0, 1
-  while i <= #s and count < n - 1 do
-    local c = s:byte(i)
-    local len = c >= 240 and 4 or c >= 224 and 3 or c >= 192 and 2 or 1
-    out[#out + 1] = s:sub(i, i + len - 1)
-    count = count + 1
-    i = i + len
-  end
-  return table.concat(out) .. "…"
+  return text.truncate(tostring(s), n, "…")
 end
 
 function U.one_line(s)
@@ -1935,51 +1860,18 @@ function U.lines(s)
   return out
 end
 
--- Splits s at spaces into lines of at most width runes; a word longer than
--- width is cut.
-local function take(s, n)
-  local i, count = 1, 0
-  while i <= #s and count < n do
-    local c = s:byte(i)
-    i = i + (c >= 240 and 4 or c >= 224 and 3 or c >= 192 and 2 or 1)
-    count = count + 1
-  end
-  return s:sub(1, i - 1), s:sub(i)
-end
-
-local function words(s)
-  local out, start = {}, 1
-  while true do
-    local i = s:find(" ", start, true)
-    if not i then
-      out[#out + 1] = s:sub(start)
-      return out
-    end
-    out[#out + 1] = s:sub(start, i - 1)
-    start = i + 1
-  end
-end
-
--- Splits s at spaces into lines of at most width runes; a word longer than
--- width is cut. string.gmatch is avoided: it crashes inside ttt callbacks.
 function U.wrap(s, width)
-  local out, line = {}, ""
   local indent = s:match("^%s*")
-  for _, word in ipairs(words(s:sub(#indent + 1))) do
-    local candidate = line == "" and (indent .. word) or (line .. " " .. word)
-    if U.width(candidate) <= width or line == "" then
-      line = candidate
-    else
-      out[#out + 1] = line
-      line = indent .. "  " .. word
-    end
-    while U.width(line) > width do
-      local head, rest = take(line, width)
-      out[#out + 1] = head
-      line = rest
+  local inner = math.max(width - text.width(indent), 1)
+  local rest = s:sub(#indent + 1)
+  local first = text.wrap(rest, inner)[1] or ""
+  local out = { indent .. first }
+  local tail = rest:sub(#first + 1):gsub("^ +", "")
+  if tail ~= "" then
+    for _, line in ipairs(text.wrap(tail, math.max(inner - 2, 1))) do
+      out[#out + 1] = indent .. "  " .. line
     end
   end
-  out[#out + 1] = line
   return out
 end
 
@@ -2324,12 +2216,7 @@ local function error_lines(p, q)
     return
   end
   for i, line in ipairs(U.lines(q.err)) do
-    p:label({
-      text = (i == 1 and "✕ " or "  ") .. line,
-      style = "danger",
-      padding_left = 1,
-      margin_top = i == 1 and 1 or 0,
-    })
+    UI.message(p, line, "danger", { prefix = i == 1 and "✕ " or "  ", margin_top = i == 1 and 1 or nil })
   end
 end
 
@@ -2349,14 +2236,13 @@ local function page_rows(rows, offset, limit)
   return out
 end
 
-local function grid_box(q, width, b)
+local function grid_box(q, b)
   local set = q.sets[q.active] or { columns = {}, numeric = {}, rows = {} }
   local limit = S.page_size()
   UI.grid(b, q.grid, {
     columns = set.columns,
     numeric = set.numeric,
     rows = page_rows(set.rows, q.offset, limit),
-    width = width - 2,
     offset = q.offset,
     limit = limit,
     total = #set.rows,
@@ -2378,7 +2264,7 @@ local function results(p, q)
   if #q.sets > 1 then
     set_tabs(p, q)
   end
-  UI.frame(p, "Results", U.bind(grid_box, q, (p:size())), { margin_top = #q.sets > 1 and 0 or 1 })
+  UI.frame(p, "Results", U.bind(grid_box, q), { margin_top = #q.sets > 1 and 0 or 1 })
 end
 
 local function render(q, p)
@@ -2611,7 +2497,7 @@ local function status_text(tv)
   return text, "muted"
 end
 
-local function grid_box(tv, width, b)
+local function grid_box(tv, b)
   local d = tv.data
   local set = d.set or {}
   local columns, numeric = set.columns, set.numeric
@@ -2622,7 +2508,6 @@ local function grid_box(tv, width, b)
     columns = columns,
     numeric = numeric,
     rows = set.rows or {},
-    width = width - 2,
     offset = d.offset,
     limit = S.page_size(),
     total = d.total,
@@ -2642,13 +2527,12 @@ end
 function M.render(p, tv)
   Store.ensure_structure(tv)
   Store.ensure_data(tv)
-  local width = p:size()
   filter_input(p, tv)
   p:hstack({ height = 1, gap = 1, render = U.bind(status_row, tv) })
   if tv.structure.err then
-    p:label({ text = "! " .. U.one_line(tv.structure.err), style = "warning", padding_left = 1 })
+    UI.message(p, U.one_line(tv.structure.err), "warning", { prefix = "! " })
   end
-  UI.frame(p, "Rows", U.bind(grid_box, tv, width))
+  UI.frame(p, "Rows", U.bind(grid_box, tv))
 end
 
 return M

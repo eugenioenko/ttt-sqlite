@@ -3,16 +3,13 @@ local S = require("core.state")
 local R = require("core.results")
 local Dialog = require("components.dialog")
 
--- A page of result rows as a table. ttt's table has no horizontal scroll, so
--- when the columns do not fit, the grid shows a window of them that [ and ]
--- (or the ‹ › buttons) move.
 local M = {}
 
 local MAX_COL = 40
 local MIN_COL = 4
 
 function M.new_grid()
-  return { sel = 1, col = 1 }
+  return { sel = 1 }
 end
 
 -- sqlite3 -json prints reals with 17 digits (864.7859999999999); the row
@@ -43,21 +40,6 @@ local function natural_widths(columns, numeric, rows)
     widths[c] = math.max(MIN_COL, math.min(w, MAX_COL))
   end
   return widths
-end
-
--- The columns from `first` that fit in avail cells, two cells apart.
-local function window(widths, first, avail)
-  local last, used = first, widths[first]
-  while last < #widths and used + 2 + widths[last + 1] <= avail do
-    last = last + 1
-    used = used + 2 + widths[last]
-  end
-  return last
-end
-
-local function shift(g, by, count)
-  g.col = math.max(1, math.min(g.col + by, count))
-  S.redraw()
 end
 
 local function select_row(g, i)
@@ -94,73 +76,45 @@ local function activate_row(g, opts, i)
   M.show_row(title, opts.columns, opts.rows[i])
 end
 
-local function grid_command(g, count, cmd, i)
-  g.sel = i or g.sel
-  if cmd == "prev_cols" then
-    shift(g, -1, count)
-  elseif cmd == "next_cols" then
-    shift(g, 1, count)
-  end
-end
-
 local function change_page(g, opts, offset)
   g.sel = 1
   opts.on_page(offset)
 end
 
-local function nav_buttons(g, first, last, count, h)
-  h:button({ label = "‹", style = "bracket", disabled = first <= 1, on_click = U.bind(shift, g, -1, count) })
-  h:label({
-    text = "Columns " .. first .. "–" .. last .. " of " .. count,
-    style = "muted",
-    width = U.width("Columns " .. first .. "–" .. last .. " of " .. count),
+local function footer(g, opts, h)
+  h:pager({
+    offset = opts.offset or 0,
+    limit = opts.limit or S.page_size(),
+    total = opts.total or #opts.rows,
+    on_change = U.bind(change_page, g, opts),
   })
-  h:button({ label = "›", style = "bracket", disabled = last >= count, on_click = U.bind(shift, g, 1, count) })
 end
 
-local function footer(g, opts, first, last, h)
-  local count = #opts.columns
-  if opts.on_page then
-    h:pager({
-      offset = opts.offset or 0,
-      limit = opts.limit or S.page_size(),
-      total = opts.total or #opts.rows,
-      on_change = U.bind(change_page, g, opts),
-    })
-  end
-  if first > 1 or last < count then
-    nav_buttons(g, first, last, count, h)
-  end
-end
-
--- opts: columns, numeric, rows (the page), width, offset, limit, total,
+-- opts: columns, numeric, rows (the page), offset, limit, total,
 -- on_page(offset), loading, empty, row_title.
 function M.grid(p, g, opts)
   local columns = opts.columns or {}
   local count = #columns
-  if g.col > count then
-    g.col = math.max(count, 1)
-  end
   local numeric = opts.numeric or {}
   local widths = natural_widths(columns, numeric, opts.rows or {})
-  local first = count > 0 and g.col or 1
-  local last = count > 0 and window(widths, first, math.max((opts.width or 80) - 3, 10)) or 0
   local cols, rows = {}, {}
-  for c = first, last do
+  for c = 1, count do
     local col = { label = columns[c], align = numeric[c] and "right" or nil }
-    if c < last or last < count then
+    if c < count then
       col.width = widths[c]
+    else
+      col.min_width = widths[c]
     end
-    cols[#cols + 1] = col
+    cols[c] = col
   end
   for r, row in ipairs(opts.rows or {}) do
     local cells = {}
-    for c = first, last do
-      cells[#cells + 1] = M.cell(row[c], numeric[c])
+    for c = 1, count do
+      cells[c] = M.cell(row[c], numeric[c])
     end
     rows[r] = cells
   end
-  if #cols == 0 then
+  if count == 0 then
     cols = { { label = "" } }
   end
   if g.sel > #rows then
@@ -175,11 +129,11 @@ function M.grid(p, g, opts)
     empty = opts.empty or "No rows",
     on_select = U.bind(select_row, g),
     on_activate = U.bind(activate_row, g, opts),
-    key_commands = { ["["] = "prev_cols", ["]"] = "next_cols" },
-    on_command = U.bind(grid_command, g, count),
   })
-  p:divider()
-  p:hstack({ height = 1, gap = 2, align = "center", render = U.bind(footer, g, opts, first, last) })
+  if opts.on_page then
+    p:divider()
+    p:hstack({ height = 1, gap = 2, align = "center", render = U.bind(footer, g, opts) })
+  end
 end
 
 return M

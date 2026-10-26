@@ -67,7 +67,7 @@ local function status_text(tv)
   return text, "muted"
 end
 
-local function grid_box(tv, width, b)
+local function grid_box(tv, b)
   local d = tv.data
   local set = d.set or {}
   local columns, numeric = set.columns, set.numeric
@@ -78,7 +78,6 @@ local function grid_box(tv, width, b)
     columns = columns,
     numeric = numeric,
     rows = set.rows or {},
-    width = width - 2,
     offset = d.offset,
     limit = S.page_size(),
     total = d.total,
@@ -98,13 +97,12 @@ end
 function M.render(p, tv)
   Store.ensure_structure(tv)
   Store.ensure_data(tv)
-  local width = p:size()
   filter_input(p, tv)
   p:hstack({ height = 1, gap = 1, render = U.bind(status_row, tv) })
   if tv.structure.err then
-    p:label({ text = "! " .. U.one_line(tv.structure.err), style = "warning", padding_left = 1 })
+    UI.message(p, U.one_line(tv.structure.err), "warning", { prefix = "! " })
   end
-  UI.frame(p, "Rows", U.bind(grid_box, tv, width))
+  UI.frame(p, "Rows", U.bind(grid_box, tv))
 end
 
 return M

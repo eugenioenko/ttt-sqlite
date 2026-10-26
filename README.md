@@ -8,8 +8,8 @@ The plugin drives the `sqlite3` command line shell, so it works with any databas
 
 - **Open a database**: `SQLite: Open Database…` takes a path (`~` and relative paths work) and remembers the last ten files under **Recent**. Opening a `.sqlite`, `.sqlite3` or `.db` file from the explorer, or any file that starts with the SQLite header, shows the database overview in that file's tab and makes it the database in the sidebar.
 - **Sidebar**: the **SQLite** panel shows the open database, a **Schema** switcher with `main`, `temp` and every attached database, and the tables and views of the selected schema. Tables show their row count on the right, views show `view`. Click a table or press Enter on it to open it in its own editor tab; right-click for **Query**.
-- **Table tab**: a **Data** tab with the rows, a page at a time, a `WHERE` filter, and an order by any column, ascending or descending. Press Enter on a row (or double-click it) to see every column of it in full. When the columns don't fit the width, `[` and `]` (or the `‹` `›` buttons) move through them. A **Structure** tab lists the columns (type, not null, default, primary key, generated), indexes, foreign keys, triggers and the `CREATE` statement, which **Open as SQL** opens in a read-only editor tab with highlighting.
-- **Query tab**: `SQLite: New Query`, **New Query** in the sidebar, or **Query** on a table opens a tab with an SQL editor. **Run** or F5 runs it and shows the rows, the row count, the rows changed and the time. A script with several `SELECT`s shows one result tab per statement. Errors from `sqlite3` show in red with the line and position it reports, below the results of the statements that ran before it.
+- **Table tab**: a **Data** tab with the rows, a page at a time, a `WHERE` filter, and an order by any column, ascending or descending. Press Enter on a row (or double-click it) to see every column of it in full. Every column is shown at the width of its content, up to 40 cells; when they don't fit, the table scrolls sideways with Shift+wheel, a horizontal wheel or the scrollbar, and Left and Right jump a column. A **Structure** tab lists the columns (type, not null, default, primary key, generated), indexes, foreign keys, triggers and the `CREATE` statement, which **Open as SQL** opens in a read-only editor tab with highlighting.
+- **Query tab**: `SQLite: New Query`, **New Query** in the sidebar, or **Query** on a table opens a tab with an SQL editor. **Run** or F5 runs it and shows the rows in the same grid as the Data tab, with the row count, the rows changed and the time. A script with several `SELECT`s shows one result tab per statement. Errors from `sqlite3` show in red with the line and position it reports, below the results of the statements that ran before it.
 - **Attach**: `SQLite: Attach Database…` attaches another file under a schema name, and `SQLite: Detach Schema` removes the selected one. Attachments are remembered per database.
 
 Other commands: `SQLite: Refresh`, `SQLite: Close Database`, `SQLite: Show Panel` and `SQLite: Settings…`. The panel's `⋮` menu has the same entries.
@@ -91,7 +91,7 @@ Format with `stylua src` (settings in `.stylua.toml`).
 
 ## Requirements
 
-A `sqlite3` shell with `-json` (SQLite 3.33 or newer). The plugin uses widget features of current ttt: `pager`, `tabs`, table `on_activate`, `selected`, `loading`, `empty` and `inset`, list `badge_right` and `inset`, hstack `align`, button styles, keyvalue `muted_keys`, bordered and titled inputs, and file handlers.
+A `sqlite3` shell with `-json` (SQLite 3.33 or newer). The plugin uses features of current ttt: `ttt.text`, `pager`, `tabs`, table horizontal scrolling, `min_width`, `on_activate`, `selected`, `loading`, `empty` and `inset`, list `badge_right` and `inset`, hstack `align`, button styles, keyvalue `muted_keys`, bordered and titled inputs, and file handlers.
 
 ## License
 

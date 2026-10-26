@@ -1,3 +1,5 @@
+local text = require("ttt.text")
+
 local U = {}
 
 function U.trim(s)
@@ -17,61 +19,12 @@ function U.stem(path)
   return (name:gsub("%.[^%.]+$", ""))
 end
 
-local function wide(cp)
-  return (cp >= 0x1100 and cp <= 0x115F)
-    or (cp >= 0x2E80 and cp <= 0xA4CF)
-    or (cp >= 0xAC00 and cp <= 0xD7A3)
-    or (cp >= 0xF900 and cp <= 0xFAFF)
-    or (cp >= 0xFE30 and cp <= 0xFE4F)
-    or (cp >= 0xFF00 and cp <= 0xFF60)
-    or (cp >= 0xFFE0 and cp <= 0xFFE6)
-    or cp >= 0x1F300
-end
-
--- Approximate terminal columns, for sizing table columns only: ttt measures
--- and clips what it draws, so an estimate that is off just wastes a cell.
 function U.width(s)
-  s = tostring(s)
-  if not s:find("[\128-\255]") then
-    return #s
-  end
-  local n, i = 0, 1
-  while i <= #s do
-    local c = s:byte(i)
-    if c < 0x80 then
-      n = n + 1
-      i = i + 1
-    elseif c >= 0xF0 then
-      n = n + 2
-      i = i + 4
-    elseif c >= 0xE0 then
-      local cp = (c - 0xE0) * 0x1000 + ((s:byte(i + 1) or 0x80) - 0x80) * 0x40 + ((s:byte(i + 2) or 0x80) - 0x80)
-      n = n + (wide(cp) and 2 or 1)
-      i = i + 3
-    elseif c >= 0xC0 then
-      n = n + 1
-      i = i + 2
-    else
-      i = i + 1
-    end
-  end
-  return n
+  return text.width(tostring(s))
 end
 
 function U.clip(s, n)
-  s = tostring(s)
-  if U.width(s) <= n then
-    return s
-  end
-  local out, count, i = {}, 0, 1
-  while i <= #s and count < n - 1 do
-    local c = s:byte(i)
-    local len = c >= 240 and 4 or c >= 224 and 3 or c >= 192 and 2 or 1
-    out[#out + 1] = s:sub(i, i + len - 1)
-    count = count + 1
-    i = i + len
-  end
-  return table.concat(out) .. "…"
+  return text.truncate(tostring(s), n, "…")
 end
 
 function U.one_line(s)
@@ -95,51 +48,18 @@ function U.lines(s)
   return out
 end
 
--- Splits s at spaces into lines of at most width runes; a word longer than
--- width is cut.
-local function take(s, n)
-  local i, count = 1, 0
-  while i <= #s and count < n do
-    local c = s:byte(i)
-    i = i + (c >= 240 and 4 or c >= 224 and 3 or c >= 192 and 2 or 1)
-    count = count + 1
-  end
-  return s:sub(1, i - 1), s:sub(i)
-end
-
-local function words(s)
-  local out, start = {}, 1
-  while true do
-    local i = s:find(" ", start, true)
-    if not i then
-      out[#out + 1] = s:sub(start)
-      return out
-    end
-    out[#out + 1] = s:sub(start, i - 1)
-    start = i + 1
-  end
-end
-
--- Splits s at spaces into lines of at most width runes; a word longer than
--- width is cut. string.gmatch is avoided: it crashes inside ttt callbacks.
 function U.wrap(s, width)
-  local out, line = {}, ""
   local indent = s:match("^%s*")
-  for _, word in ipairs(words(s:sub(#indent + 1))) do
-    local candidate = line == "" and (indent .. word) or (line .. " " .. word)
-    if U.width(candidate) <= width or line == "" then
-      line = candidate
-    else
-      out[#out + 1] = line
-      line = indent .. "  " .. word
-    end
-    while U.width(line) > width do
-      local head, rest = take(line, width)
-      out[#out + 1] = head
-      line = rest
+  local inner = math.max(width - text.width(indent), 1)
+  local rest = s:sub(#indent + 1)
+  local first = text.wrap(rest, inner)[1] or ""
+  local out = { indent .. first }
+  local tail = rest:sub(#first + 1):gsub("^ +", "")
+  if tail ~= "" then
+    for _, line in ipairs(text.wrap(tail, math.max(inner - 2, 1))) do
+      out[#out + 1] = indent .. "  " .. line
     end
   end
-  out[#out + 1] = line
   return out
 end
 

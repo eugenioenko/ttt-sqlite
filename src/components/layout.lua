@@ -1,3 +1,4 @@
+local text = require("ttt.text")
 local U = require("core.util")
 
 local M = {}
@@ -27,14 +28,36 @@ end
 
 function M.checkbox(h, label, checked, on_change, opts)
   local spec = { label = label, checked = checked, on_change = on_change }
-  h:box(merge({ width = #label + 5, render = U.bind(checkbox_cell, spec) }, opts))
+  h:box(merge({ width = U.width(label) + 5, render = U.bind(checkbox_cell, spec) }, opts))
 end
 
 -- A button aligned with bordered inputs in the same row.
 function M.button_box(h, label, on_click, disabled, style)
   local spec = { label = label, on_click = on_click, disabled = disabled, style = style }
-  local width = #label + 2 + (style == "bracket" and 2 or 0)
+  local width = U.width(label) + 2 + (style == "bracket" and 2 or 0)
   h:box({ padding_top = 1, width = width, render = U.bind(button_cell, spec) })
+end
+
+-- Wraps msg to the panel width after opts.prefix, one label per line. With
+-- opts.rows it takes exactly that many rows, ending in "…" when cut short.
+function M.message(p, msg, style, opts)
+  opts = opts or {}
+  local prefix = opts.prefix or ""
+  local pad = string.rep(" ", U.width(prefix))
+  local width = math.max((p:size()) - 1 - #pad, 1)
+  local lines = msg == "" and { "" } or text.wrap(msg, width)
+  local rows = opts.rows or #lines
+  if #lines > rows then
+    lines[rows] = U.clip(lines[rows] .. " …", width)
+  end
+  for i = 1, rows do
+    p:label({
+      text = lines[i] and ((i == 1 and prefix or pad) .. lines[i]) or "",
+      style = style,
+      padding_left = 1,
+      margin_top = i == 1 and opts.margin_top or nil,
+    })
+  end
 end
 
 function M.kv(entries)
