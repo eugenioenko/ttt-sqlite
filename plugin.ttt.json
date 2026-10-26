@@ -1,0 +1,25 @@
+{
+  "name": "sqlite",
+  "displayName": "SQLite",
+  "description": "Browse SQLite databases: attached schemas, tables and views, paged rows, structure, and a query tab",
+  "version": "0.1.0",
+  "author": "eugenioenko",
+  "entry": "init.lua",
+  "api": 1,
+  "permissions": {
+    "panel.sidebar": true,
+    "panel.editor": true,
+    "commands": true,
+    "storage": true,
+    "editor.file_handlers": true,
+    "system.env": true,
+    "system.exec": [
+      "sqlite3",
+      "/usr/bin/sqlite3",
+      "/usr/local/bin/sqlite3",
+      "/opt/homebrew/bin/sqlite3",
+      "/opt/homebrew/opt/sqlite/bin/sqlite3",
+      "/usr/local/opt/sqlite/bin/sqlite3"
+    ]
+  }
+}
