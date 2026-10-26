@@ -8,7 +8,6 @@ local UI = require("components")
 local M = {}
 
 local MARK = "__ttt_sqlite_changes"
-local READONLY = "attempt to write a readonly database"
 
 M.count = 0
 
@@ -45,12 +44,45 @@ local function split_changes(sets)
   return nil
 end
 
+local function stop_ticker(q)
+  if q.ticker then
+    ttt.clear_interval(q.ticker)
+    q.ticker = nil
+  end
+end
+
+local function received(q, gen, sets)
+  if gen ~= q.gen then
+    return
+  end
+  local n = 0
+  for _, set in ipairs(sets) do
+    if set.columns[1] ~= MARK then
+      n = n + #set.rows + set.dropped
+    end
+  end
+  q.received = n
+end
+
+local function stop_reason(info)
+  if info.cancelled then
+    return "cancelled"
+  elseif info.timed_out then
+    return "timed_out"
+  elseif info.truncated then
+    return "truncated"
+  end
+end
+
 local function finished(q, gen, write, err, sets, info)
   if gen ~= q.gen then
     return
   end
   q.running = false
-  if err and not write and err:find(READONLY, 1, true) then
+  q.job = nil
+  stop_ticker(q)
+  local stopped = stop_reason(info)
+  if not write and not stopped and Sqlite.refused_write(err) then
     q.err = nil
     q.notice = "Stopped at a statement that writes; nothing was changed."
     S.redraw()
@@ -58,7 +90,13 @@ local function finished(q, gen, write, err, sets, info)
     return
   end
   q.ran = true
-  q.err = err
+  q.stopped = stopped
+  q.timeout_ms = info.timeout_ms
+  if stopped then
+    q.err = info.stderr ~= "" and info.stderr or nil
+  else
+    q.err = err
+  end
   q.changes = split_changes(sets)
   q.sets = sets
   q.notes = info.notes or {}
@@ -73,27 +111,51 @@ local function finished(q, gen, write, err, sets, info)
   S.redraw()
 end
 
-function M.run(q, write)
+local function tick(q)
   if q.running then
-    return
+    S.redraw()
+  else
+    stop_ticker(q)
   end
+end
+
+-- Running again while a run is in flight replaces it: the old sqlite3 is
+-- killed and its result, which still arrives, is dropped by the gen check.
+function M.run(q, write)
   if U.trim(q.sql) == "" then
     q.err = "Type some SQL first"
     S.redraw()
     return
   end
+  Sqlite.cancel(q.job)
   write = write == true or q.write
   q.gen = q.gen + 1
   q.running = true
+  q.started = os.clock()
+  q.received = 0
   q.err = nil
   q.notice = nil
+  stop_ticker(q)
+  q.ticker = ttt.set_interval(500, U.bind(tick, q))
+  q.job = Sqlite.run(q.db, script(q.sql), {
+    write = write,
+    limit = tonumber(S.settings.query_row_limit),
+    timeout_ms = S.query_timeout_ms(),
+    on_progress = U.bind(received, q, q.gen),
+  }, U.bind(finished, q, q.gen, write))
   S.redraw()
-  Sqlite.run(
-    q.db,
-    script(q.sql),
-    { write = write, limit = tonumber(S.settings.query_row_limit) },
-    U.bind(finished, q, q.gen, write)
-  )
+end
+
+function M.cancel(q)
+  Sqlite.cancel(q.job)
+end
+
+-- For a closed tab: nothing is left to show the result in.
+function M.dispose(q)
+  q.gen = q.gen + 1
+  stop_ticker(q)
+  Sqlite.cancel(q.job)
+  q.job = nil
 end
 
 function M.set_sql(q, text)

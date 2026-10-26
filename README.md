@@ -1,76 +1,104 @@
 # SQLite for ttt
 
-Browse and query [SQLite](https://sqlite.org) databases inside the [ttt](https://github.com/eugenioenko/ttt) terminal editor.
+Browse and query [SQLite](https://sqlite.org) databases inside the [ttt](https://github.com/eugenioenko/ttt) terminal editor. The plugin drives the `sqlite3` command line shell, so it opens any database file `sqlite3` can open.
 
-The plugin drives the `sqlite3` command line shell, so it works with any database file `sqlite3` can open and needs nothing else installed.
+## Requirements
 
-## Features
-
-- **Open a database**: `SQLite: Open Database…` takes a path (`~` and relative paths work) and remembers the last ten files under **Recent**. Opening a `.sqlite`, `.sqlite3` or `.db` file from the explorer, or any file that starts with the SQLite header, shows the database overview in that file's tab and makes it the database in the sidebar.
-- **Sidebar**: the **SQLite** panel shows the open database, a **Schema** switcher with `main`, `temp` and every attached database, and the tables and views of the selected schema. Tables show their row count on the right, views show `view`. Click a table or press Enter on it to open it in its own editor tab; right-click for **Query**.
-- **Table tab**: a **Data** tab with the rows, a page at a time, a `WHERE` filter, and an order by any column, ascending or descending. Press Enter on a row (or double-click it) to see every column of it in full. Every column is shown at the width of its content, up to 40 cells; when they don't fit, the table scrolls sideways with Shift+wheel, a horizontal wheel or the scrollbar, and Left and Right jump a column. A **Structure** tab lists the columns (type, not null, default, primary key, generated), indexes, foreign keys, triggers and the `CREATE` statement, which **Open as SQL** opens in a read-only editor tab with highlighting.
-- **Query tab**: `SQLite: New Query`, **New Query** in the sidebar, or **Query** on a table opens a tab with an SQL editor. **Run** or F5 runs it and shows the rows in the same grid as the Data tab, with the row count, the rows changed and the time. A script with several `SELECT`s shows one result tab per statement. Errors from `sqlite3` show in red with the line and position it reports, below the results of the statements that ran before it.
-- **Attach**: `SQLite: Attach Database…` attaches another file under a schema name, and `SQLite: Detach Schema` removes the selected one. Attachments are remembered per database.
-
-Other commands: `SQLite: Refresh`, `SQLite: Close Database`, `SQLite: Show Panel` and `SQLite: Settings…`. The panel's `⋮` menu has the same entries.
-
-## Reading and writing
-
-Browsing never writes: every file is opened with a `file:` URI and `mode=ro`, so the plugin cannot change a database or create a missing one while you look around.
-
-A query also runs read-only first. When it reaches a statement that writes, `sqlite3` stops with "attempt to write a readonly database" before anything is changed, and the plugin asks whether to run it again with write access (`mode=rw`). Tick **Allow writes** in the query tab to skip the question. After a read-write run, the sidebar and open tables reload.
-
-Each query is a separate `sqlite3` process, so the connection does not outlive it: `temp` tables, `PRAGMA` settings and `ATTACH` statements typed into a query last for that run only. Use **Attach Database…** for attachments that should stay. Every statement runs in autocommit mode unless the script has its own `BEGIN` and `COMMIT`.
-
-## How sqlite3 is called
-
-The plugin runs `sqlite3` with `ttt.system.exec_async` and an argument list, never a shell:
-
-```
-sqlite3 -noinit -batch -json [-cmd "ATTACH 'file:…?mode=ro' AS \"name\""]… -cmd ".bail on" "file:/path/to.db?mode=ro"
-```
-
-The SQL goes in on standard input. `-noinit` keeps `~/.sqliterc` from changing the output mode (older shells without `-noinit` are retried without it). `.bail on` is turned on with `-cmd` because `-bail` on the command line makes `sqlite3` exit right after the first `-cmd`.
-
-Output is parsed from `-json`, which prints one JSON array per statement that returns rows. It was picked over the other modes because:
-
-- strings are escaped, so values with newlines, tabs, quotes or separator characters can't break the parse, which is the weakness of the `list`, `tabs` and `ascii` modes;
-- `NULL` is `null`, distinct from an empty string or the text `NULL`;
-- numbers and text are told apart, so numeric columns align right.
-
-The plugin reads the JSON itself instead of with `ttt.json`, to keep the column order and duplicate column names, and to keep integers beyond 2^53 exact. Reals are shown with 15 significant digits in the grid (`sqlite3 -json` prints 17) and exactly in the row view. Blobs show as `<blob N bytes>` in the Data tab; in a query, select `hex(col)` to see one. `-json` prints nothing for a statement without rows, so an empty result has no column names.
-
-## Settings
-
-`SQLite: Settings…` (stored with `ttt.storage`):
-
-- **sqlite3 binary** (`sqlite3_path`, default `sqlite3`): checked with `sqlite3 -version` before it is saved.
-- **Page size**: rows per page in tables and query results (25, 50, 100 or 200).
-- **Count rows in databases up to (MiB)**: the sidebar counts the rows of every table with `count(*)` when the schema is at most this size (default 64), and leaves the counts out for bigger ones.
-- **Query rows kept**: a query keeps at most this many rows per result (default 5000).
-
-ttt runs only the binaries the manifest lists under `system.exec`, matched exactly. The manifest lists `sqlite3` (found on `PATH`) and the usual absolute paths (`/usr/bin`, `/usr/local/bin`, and Homebrew's `/opt/homebrew/bin`, `/opt/homebrew/opt/sqlite/bin` and `/usr/local/opt/sqlite/bin`). To use another path, add it to `plugin.ttt.json` and approve the plugin again, or put that `sqlite3` first on `PATH`.
+- **ttt newer than 1.9.0** (a build of ttt `main` until the next release). The plugin uses cancellable, streamed `sqlite3` runs with timeouts and approval of a custom binary path, which 1.9.0 does not have.
+- **sqlite3 3.33 or newer**, the first version with `-json`. Check with `sqlite3 -version`.
+  - Ubuntu and Debian: `sudo apt install sqlite3`
+  - macOS: `/usr/bin/sqlite3` ships with the system; `brew install sqlite` gives a newer one.
 
 ## Install
 
-Link the repository into ttt's plugins folder and restart ttt:
+From ttt: open the **Plugins** tab in the sidebar, search for "sqlite", and click **Install**. Or run **Plugins: Install from URL** with `https://github.com/eugenioenko/ttt-sqlite`.
+
+By hand:
 
 ```sh
-ln -s "$PWD/ttt-sqlite" ~/.config/ttt/plugins/sqlite
+git clone https://github.com/eugenioenko/ttt-sqlite ~/.config/ttt/plugins/sqlite
 ```
 
-ttt asks you to approve the permissions on first start: `system.exec` (to run `sqlite3`), `system.env` (`HOME` and `PWD`, to expand `~` and relative paths), `editor.file_handlers` (to open database files from the explorer), `storage` (recent files, attachments and settings), `panel.sidebar`, `panel.editor` and `commands`.
+then restart ttt.
+
+### Permissions
+
+ttt asks you to approve these once, when the plugin is installed:
+
+- `system.exec: sqlite3`: run the `sqlite3` found on your `PATH`. It is the only program the plugin runs, always with an argument list and never through a shell.
+- `editor.file_handlers`: open `.db`, `.sqlite` and `.sqlite3` files, and any file with the SQLite header, from the explorer.
+- `system.env`: read `HOME` and `PWD`, to expand `~` and relative paths.
+- `storage`: remember recent files, attached databases and settings.
+- `panel.sidebar`, `panel.editor`, `commands`: the SQLite panel, its tabs and its commands.
+
+To use a `sqlite3` that is not on your `PATH`, set its absolute path in **SQLite: Settings…**. When you save it, ttt asks you once to allow that exact file, and remembers the answer. The plugin asks only for the path you choose instead of listing common install locations in its manifest, so installing it does not grant access to binaries you never use. The file must be named `sqlite3`.
+
+## Use
+
+**Open a database** in any of these ways:
+
+- Open a database file from the explorer: it shows the database overview in that file's tab.
+- **SQLite: Open Database…** takes a path (`~` and relative paths work) and lists the last ten files under **Recent**.
+- The **SQLite** sidebar panel lists recent files while no database is open.
+
+Opening a database that is already open switches to its tab. **SQLite: Close Database** closes it with every tab it opened.
+
+**Browse** from the sidebar: pick a schema (`main`, `temp` or an attached database), then click a table or view, or press Enter on it, to open it in a tab with its **Data** (paged rows, a `WHERE` filter, ordering) and its **Structure** (columns, indexes, foreign keys, triggers and the `CREATE` statement).
+
+**Query** with **SQLite: New Query**, **New Query** in the sidebar, or **Query** on a table. The cursor starts in the SQL editor.
+
+| Key or button | Does |
+|---------------|------|
+| F5 or **Run** | Run the SQL. Running again while a query runs stops it and starts over. |
+| **Cancel** | Stop the running query. Rows that already arrived stay on screen, marked **Cancelled**. Closing the tab cancels too. |
+| Enter or double-click on a row | Show every column of the row. Escape or **Close** closes it. |
+| Left and Right, Shift+wheel | Scroll wide results sideways: the arrows jump a column. |
+| Tab and Shift+Tab | Move between the editor, buttons and the results. |
+
+A script with several `SELECT`s shows one result tab per statement. Blobs show as `<blob N bytes>` in the Data tab; in a query, select `hex(col)` to see one. Errors from `sqlite3` show in red below the results of the statements that ran before them.
+
+### Reading and writing
+
+Browsing never writes: every file is opened read-only, so the plugin cannot change a database, or create a missing one, while you look around.
+
+A query also runs read-only first. When it reaches a statement that writes, `sqlite3` stops before anything changes, and the plugin asks whether to run the query again with write access. Tick **Allow writes** in the query tab to skip the question. After a run with write access the sidebar and open tables reload.
+
+Each query runs in its own `sqlite3` process, so `temp` tables, `PRAGMA` settings and `ATTACH` statements in a query last for that run only. Use **SQLite: Attach Database…** for attachments that should stay. Statements run in autocommit mode unless the script has its own `BEGIN` and `COMMIT`, so when a query is cancelled or times out, the statements that finished stay committed and the one that was running is rolled back.
+
+### Big results and timeouts
+
+Rows are read as `sqlite3` prints them, so a large result does not have to fit in memory. A query keeps the first **Query rows kept** rows of each result (5000 by default) and says "first 5,000 of 120,000 rows shown". When a query prints more than 64 MiB, the plugin stops `sqlite3` and shows the rows kept so far.
+
+A query that runs longer than the **Query timeout** (5 minutes by default) is stopped and shows **Timed out**. The panel's own lookups (schemas, tables, row counts, structure) stop after 30 seconds.
+
+## Settings
+
+**SQLite: Settings…**:
+
+- **sqlite3 binary**: `sqlite3` (from `PATH`, the default) or an absolute path. It is checked with `sqlite3 -version` before it is saved.
+- **Page size**: rows per page in tables and query results (25, 50, 100 or 200).
+- **Count rows in databases up to (MiB)**: the sidebar counts the rows of every table when the schema is at most this size (default 64).
+- **Query rows kept**: rows kept per query result (default 5000).
+- **Query timeout**: 10 seconds to 1 hour, or no timeout (default 5 minutes). It also applies to loading a table's rows, which runs your filter.
+
+## Commands
+
+`SQLite: Open Database…`, `New Query`, `Attach Database…`, `Detach Schema`, `Refresh`, `Close Database`, `Show Panel` and `Settings…`. The sidebar panel's `⋮` menu has the same entries.
 
 ## Development
 
-ttt loads a plugin from a single Lua file, so the source lives in `src/` as modules and `scripts/build.py` bundles them into `init.lua`. Edit `src/`, never `init.lua`, and rebuild:
+ttt loads a plugin from one Lua file, so the source lives in `src/` as modules and `scripts/build.py` bundles them into `init.lua`. Edit `src/`, never `init.lua`, then:
 
 ```sh
 scripts/build.py           # writes init.lua
 scripts/build.py --check   # fails when init.lua is out of date
+stylua src tests           # format (settings in .stylua.toml)
+scripts/test.sh            # tests
 ```
 
-A module's name is its path: `src/features/table/store.lua` is `require("features.table.store")`, and a folder's `init.lua` is the folder itself, so `src/features/table/init.lua` is `require("features.table")`. The bundle runs `src/main.lua`.
+`scripts/test.sh` runs the unit tests in `tests/*_test.lua` with gopher-lua, the Lua that ttt embeds, through the small Go runner in `tests/runner` (needs Go). They cover the `-json` parser, quoting and the `sqlite3` arguments. It then runs `tests/smoke.sh`, which opens a database in the real editor, runs a query and checks that a write is stopped by the read-only first run; it needs `ttt` on `PATH` (or `TTT=/path/to/ttt`) and `sqlite3`, and is skipped without them. CI runs the bundle check, stylua and the tests.
+
+A module's name is its path: `src/features/table/store.lua` is `require("features.table.store")`, and a folder's `init.lua` is the folder itself. The bundle runs `src/main.lua`.
 
 ```
 src/
@@ -83,15 +111,17 @@ src/
   features/overview/  the database overview a .db file opens in
 ```
 
-`Router.show(id, make_page)` opens a page in its own editor tab, or focuses the tab when it is already open. Pages are built from named local functions instead of nested inline closures. Callbacks are wired with `U.bind(fn, ...)`, which passes its bound arguments first and the caller's after them, so functions used as callbacks take their context first and the panel or event arguments last.
+Pages are built from named local functions instead of nested inline closures. Callbacks are wired with `U.bind(fn, ...)`, which passes its bound arguments first and the caller's after them. Runtime errors point at lines in `init.lua`; each module starts with a `-- src/…` comment there.
 
-Runtime errors point at lines in `init.lua`. Each module starts with a `-- src/…` comment there, so search upward from the line to find the source file.
+### How sqlite3 is called
 
-Format with `stylua src` (settings in `.stylua.toml`).
+```
+sqlite3 -noinit -batch -json [-cmd "ATTACH 'file:…?mode=ro' AS \"name\""]… -cmd ".bail on" "file:/path/to.db?mode=ro"
+```
 
-## Requirements
+The SQL goes in on standard input. Files are opened by `file:` URI so `sqlite3` never reads a path as a script or creates a file. `-noinit` keeps `~/.sqliterc` from changing the output mode (older shells without it are retried without it). `.bail on` is set with `-cmd` because `-bail` on the command line makes `sqlite3` exit after the first `-cmd`.
 
-A `sqlite3` shell with `-json` (SQLite 3.33 or newer). The plugin uses features of current ttt: `ttt.text`, `pager`, `tabs`, table horizontal scrolling, `min_width`, `on_activate`, `selected`, `loading`, `empty` and `inset`, list `badge_right` and `inset`, hstack `align`, button styles, keyvalue `muted_keys`, bordered and titled inputs, and file handlers.
+Output is `-json`, read with the plugin's own parser (`src/core/results.lua`) as it streams in through `on_stdout`. `-json` escapes strings, keeps `NULL` apart from empty text and the text `NULL`, and tells numbers from text, which `list`, `tabs` and `ascii` do not. It also prints one row per line, so it streams as well as a line-oriented mode: the parser keeps a partial line until the rest arrives, and rows past the cap are counted from their line ends without being decoded. `ttt.json` is not used because it loses the column order and duplicate column names and turns big integers into floats; the parser keeps every value as text. A trailing `SELECT total_changes()` tells a write that changed nothing from one that did.
 
 ## License
 

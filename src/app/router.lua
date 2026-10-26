@@ -75,6 +75,9 @@ function M.close_db(path)
   end
   for _, id in ipairs(ids) do
     ttt.close_tab(id)
+    if M.tabs[id].file then
+      forget(M.tabs[id])
+    end
   end
 end
 
@@ -90,10 +93,22 @@ function M.tab_strip(p, page, items)
   return page.tab
 end
 
--- Renders a file handler's tab with the same title row as router tabs.
-function M.render_page(tab, page, p)
-  tab.page = page
+-- A file handler's tab, keyed by its tab.id. ttt calls no on_close for it,
+-- so it stays listed until its database closes or the file opens again.
+function M.adopt_file(id, page)
+  local tab = { id = id, page = page, file = true }
+  M.tabs[id] = tab
+  return tab
+end
+
+function M.render_file(tab, p)
   render(tab, p)
+end
+
+-- Switches to the file handler tab of path, when it is still open.
+function M.focus_file(path)
+  local tab = M.tabs[path]
+  return tab ~= nil and tab.file == true and ttt.focus_tab(path)
 end
 
 return M

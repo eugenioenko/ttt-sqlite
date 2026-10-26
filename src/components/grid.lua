@@ -1,3 +1,4 @@
+local ttt = require("ttt")
 local U = require("core.util")
 local S = require("core.state")
 local R = require("core.results")
@@ -55,8 +56,13 @@ local function detail_entries(columns, row)
   return out
 end
 
-local function detail_body(columns, row, p)
-  p:scrollview({ render = U.bind(M.keyvalue_rows, columns, row) })
+local function close_button(h)
+  h:button({ label = "Close", style = "bracket", on_click = ttt.close_dialog })
+end
+
+local function detail_body(columns, row, rows, p)
+  p:scrollview({ height = rows, render = U.bind(M.keyvalue_rows, columns, row) })
+  p:hstack({ height = 1, margin_top = 1, align = "right", render = close_button })
 end
 
 function M.keyvalue_rows(columns, row, p)
@@ -67,7 +73,8 @@ function M.show_row(title, columns, row)
   if not row then
     return
   end
-  Dialog.open_dialog(title, 90, math.min(#columns + 1, 28), U.bind(detail_body, columns, row))
+  local rows = math.min(#columns + 1, 26)
+  Dialog.open_dialog(title, 90, rows + 2, U.bind(detail_body, columns, row, rows))
 end
 
 local function activate_row(g, opts, i)

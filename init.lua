@@ -116,6 +116,7 @@ local Db = require("core.db")
 local Sqlite = require("core.sqlite")
 local UI = require("components")
 local Paths = require("app.paths")
+local Router = require("app.router")
 
 -- The Open Database dialog: a path, or one of the recent files.
 local M = {}
@@ -129,7 +130,9 @@ local function opened(path, done, err)
   done()
   Db.open(path)
   ttt.show_panel("sidebar")
-  ttt.open_file(path)
+  if not Router.focus_file(path) then
+    ttt.open_file(path)
+  end
 end
 
 local function checked(path, done, err)
@@ -375,6 +378,9 @@ function M.close_db(path)
   end
   for _, id in ipairs(ids) do
     ttt.close_tab(id)
+    if M.tabs[id].file then
+      forget(M.tabs[id])
+    end
   end
 end
 
@@ -390,10 +396,22 @@ function M.tab_strip(p, page, items)
   return page.tab
 end
 
--- Renders a file handler's tab with the same title row as router tabs.
-function M.render_page(tab, page, p)
-  tab.page = page
+-- A file handler's tab, keyed by its tab.id. ttt calls no on_close for it,
+-- so it stays listed until its database closes or the file opens again.
+function M.adopt_file(id, page)
+  local tab = { id = id, page = page, file = true }
+  M.tabs[id] = tab
+  return tab
+end
+
+function M.render_file(tab, p)
   render(tab, p)
+end
+
+-- Switches to the file handler tab of path, when it is still open.
+function M.focus_file(path)
+  local tab = M.tabs[path]
+  return tab ~= nil and tab.file == true and ttt.focus_tab(path)
 end
 
 return M
@@ -402,10 +420,12 @@ end
 -- src/app/settings.lua ------------------------------------------------------
 __modules["app.settings"] = function()
 local ttt = require("ttt")
+local sys = require("ttt.system")
 local U = require("core.util")
 local S = require("core.state")
 local Sqlite = require("core.sqlite")
 local UI = require("components")
+local Paths = require("app.paths")
 
 local M = {}
 
@@ -416,48 +436,124 @@ M.PAGE_SIZES = {
   { label = "200 rows per page", value = "200" },
 }
 
-local function checked(old, v, done, err, version)
-  if err then
-    S.settings.sqlite3_path = old
-    return done(err)
+M.TIMEOUTS = {
+  { label = "10 seconds", value = "10" },
+  { label = "30 seconds", value = "30" },
+  { label = "1 minute", value = "60" },
+  { label = "5 minutes", value = "300" },
+  { label = "15 minutes", value = "900" },
+  { label = "1 hour", value = "3600" },
+  { label = "No timeout", value = "0" },
+}
+
+local function binary_path(text)
+  local path = U.trim(text)
+  if path == "" then
+    return S.DEFAULTS.sqlite3_path
   end
+  if path:find("/", 1, true) or path:sub(1, 1) == "~" then
+    return Paths.normalize(path)
+  end
+  return path
+end
+
+local function store(v, path, version)
+  S.settings.sqlite3_path = path
   S.settings.page_size = tonumber(v.page_size) or S.DEFAULTS.page_size
   S.settings.count_limit_mib = tonumber(v.count_limit_mib) or S.DEFAULTS.count_limit_mib
   S.settings.query_row_limit = tonumber(v.query_row_limit) or S.DEFAULTS.query_row_limit
+  S.settings.query_timeout_s = tonumber(v.query_timeout_s) or S.DEFAULTS.query_timeout_s
   S.save_settings()
-  ttt.notify("Using sqlite3 " .. version)
+  ttt.notify("Using sqlite3 " .. version .. (path == S.DEFAULTS.sqlite3_path and "" or (" at " .. path)))
+end
+
+local function approved_checked(v, path, err, version)
+  if err then
+    return M.dialog(v, err)
+  end
+  store(v, path, version)
+end
+
+local function approved(v, path, granted)
+  if not granted then
+    return M.dialog(v, path .. " was not approved, so the plugin cannot run it")
+  end
+  Sqlite.version(path, U.bind(approved_checked, v, path))
+end
+
+local function request(v, path)
+  local ok, err = sys.request_exec(path, U.bind(approved, v, path))
+  if not ok then
+    M.dialog(v, err)
+  end
+end
+
+-- ttt's approval dialog cannot open over this one, so it closes first and
+-- opens again with the same values when approval is denied or the check fails.
+local function checked(v, path, done, err, version, denied)
+  if denied and path:sub(1, 1) == "/" and sys.request_exec then
+    done()
+    return request(v, path)
+  end
+  if err then
+    return done(err)
+  end
+  store(v, path, version)
   done()
 end
 
--- The binary is checked with -version before anything is saved; Sqlite reads
--- the path from settings, so it is set first and put back on failure.
 local function save(v, done)
-  local old = S.settings.sqlite3_path
-  local path = U.trim(v.sqlite3_path)
-  S.settings.sqlite3_path = path ~= "" and path or S.DEFAULTS.sqlite3_path
-  Sqlite.version(U.bind(checked, old, v, done))
+  local path = binary_path(v.sqlite3_path)
+  if path:sub(1, 1) == "/" and U.basename(path) ~= "sqlite3" then
+    return done("The file must be named sqlite3, the name the plugin's manifest allows")
+  end
+  Sqlite.version(path, U.bind(checked, v, path, done))
 end
 
-function M.dialog()
+local function value(v, key, current)
+  if v and v[key] ~= nil then
+    return v[key]
+  end
+  return tostring(current)
+end
+
+function M.dialog(v, err)
   UI.dialog({
     title = "SQLite Settings",
     width = 80,
     busy_text = "Checking sqlite3…",
+    err = err,
     fields = {
-      { key = "sqlite3_path", label = "sqlite3 binary", value = S.binary(), placeholder = "sqlite3" },
+      {
+        key = "sqlite3_path",
+        label = "sqlite3 binary: sqlite3 on PATH, or an absolute path",
+        value = value(v, "sqlite3_path", S.binary()),
+        placeholder = "sqlite3",
+      },
       {
         key = "page_size",
         label = "Page size",
         kind = "enum",
         options = M.PAGE_SIZES,
-        value = tostring(S.page_size()),
+        value = value(v, "page_size", S.page_size()),
       },
       {
         key = "count_limit_mib",
         label = "Count rows in databases up to (MiB)",
-        value = tostring(S.settings.count_limit_mib),
+        value = value(v, "count_limit_mib", S.settings.count_limit_mib),
       },
-      { key = "query_row_limit", label = "Query rows kept", value = tostring(S.settings.query_row_limit) },
+      {
+        key = "query_row_limit",
+        label = "Query rows kept",
+        value = value(v, "query_row_limit", S.settings.query_row_limit),
+      },
+      {
+        key = "query_timeout_s",
+        label = "Query timeout",
+        kind = "enum",
+        options = M.TIMEOUTS,
+        value = value(v, "query_timeout_s", S.query_timeout_ms() / 1000),
+      },
     },
     on_submit = save,
   })
@@ -710,7 +806,7 @@ local Inputs = require("components.inputs")
 
 -- Forms from a field spec: { key, label, kind = "enum"|"multiline"|"readonly",
 -- options, value, placeholder, password, required, rows, show(vals) }, and
--- spec { fields, submit, busy_text, on_submit(vals, done), on_done }.
+-- spec { fields, submit, busy_text, err, on_submit(vals, done), on_done }.
 local M = {}
 
 function M.field_options(f)
@@ -751,7 +847,7 @@ local function submit(form)
 end
 
 function M.new_form(spec)
-  local form = { spec = spec, vals = {}, err = nil, busy = false }
+  local form = { spec = spec, vals = {}, err = spec.err, busy = false }
   for _, f in ipairs(spec.fields) do
     local v = f.value
     if v == nil and f.options then
@@ -840,6 +936,7 @@ end
 
 -- src/components/grid.lua ---------------------------------------------------
 __modules["components.grid"] = function()
+local ttt = require("ttt")
 local U = require("core.util")
 local S = require("core.state")
 local R = require("core.results")
@@ -897,8 +994,13 @@ local function detail_entries(columns, row)
   return out
 end
 
-local function detail_body(columns, row, p)
-  p:scrollview({ render = U.bind(M.keyvalue_rows, columns, row) })
+local function close_button(h)
+  h:button({ label = "Close", style = "bracket", on_click = ttt.close_dialog })
+end
+
+local function detail_body(columns, row, rows, p)
+  p:scrollview({ height = rows, render = U.bind(M.keyvalue_rows, columns, row) })
+  p:hstack({ height = 1, margin_top = 1, align = "right", render = close_button })
 end
 
 function M.keyvalue_rows(columns, row, p)
@@ -909,7 +1011,8 @@ function M.show_row(title, columns, row)
   if not row then
     return
   end
-  Dialog.open_dialog(title, 90, math.min(#columns + 1, 28), U.bind(detail_body, columns, row))
+  local rows = math.min(#columns + 1, 26)
+  Dialog.open_dialog(title, 90, rows + 2, U.bind(detail_body, columns, row, rows))
 end
 
 local function activate_row(g, opts, i)
@@ -1422,33 +1525,61 @@ end
 
 local ESCAPES = { b = "\b", f = "\f", n = "\n", r = "\r", t = "\t" }
 
+-- Raised when the text ends inside an item: the item is parsed again once
+-- more output has arrived.
+local MORE = {}
+
 local function fail(i, what)
   error({ parse = true, message = "unexpected sqlite3 output at byte " .. i .. ": " .. what }, 0)
 end
 
-local function skip(s, i)
-  local _, e = s:find("^[ \t\r\n,]*", i)
+local function short(p, i, what)
+  if p.final then
+    fail(p.base + i, what or "unexpected end")
+  end
+  error(MORE, 0)
+end
+
+local function byte_at(p, i)
+  local b = p.s:byte(i)
+  if not b then
+    short(p, i)
+  end
+  return b
+end
+
+local function skip(p, i)
+  local _, e = p.s:find("^[ \t\r\n,]*", i)
   return e + 1
 end
 
-local function read_string(s, i)
+local function read_string(p, i)
+  local s = p.s
   local parts = {}
   local start = i + 1
   while true do
     local j = s:find('["\\]', start)
     if not j then
-      fail(i, "unterminated string")
+      short(p, i, "unterminated string")
     end
     parts[#parts + 1] = s:sub(start, j - 1)
     if s:byte(j) == 34 then
       return table.concat(parts), j + 1
     end
     local c = s:sub(j + 1, j + 1)
-    if c == "u" then
+    if c == "" then
+      short(p, j)
+    elseif c == "u" then
+      if j + 5 > #s then
+        short(p, j)
+      end
       local cp = tonumber(s:sub(j + 2, j + 5), 16) or 63
       local nexti = j + 6
-      if cp >= 0xD800 and cp <= 0xDBFF and s:sub(nexti, nexti + 1) == "\\u" then
-        local lo = tonumber(s:sub(nexti + 2, nexti + 5), 16)
+      if cp >= 0xD800 and cp <= 0xDBFF then
+        if nexti + 5 > #s then
+          short(p, j)
+        end
+        local lo = s:sub(nexti, nexti + 1) == "\\u" and tonumber(s:sub(nexti + 2, nexti + 5), 16)
         if lo and lo >= 0xDC00 and lo <= 0xDFFF then
           cp = 0x10000 + (cp - 0xD800) * 0x400 + (lo - 0xDC00)
           nexti = nexti + 6
@@ -1465,37 +1596,46 @@ end
 
 -- Returns the value as text (or NULL), whether it was a number, and the next
 -- position.
-local function read_value(s, i)
-  local b = s:byte(i)
+local function read_value(p, i)
+  local s = p.s
+  local b = byte_at(p, i)
   if b == 34 then
-    local v, nexti = read_string(s, i)
+    local v, nexti = read_string(p, i)
     return v, false, nexti
   end
-  if s:sub(i, i + 3) == "null" then
-    return M.NULL, false, i + 4
+  if b == 110 then
+    if i + 3 > #s then
+      short(p, i)
+    end
+    if s:sub(i, i + 3) == "null" then
+      return M.NULL, false, i + 4
+    end
   end
   local _, e = s:find("^[%w%.%+%-]+", i)
   if not e then
-    fail(i, "expected a value")
+    fail(p.base + i, "expected a value")
+  end
+  if e == #s then
+    short(p, i)
   end
   return s:sub(i, e), true, e + 1
 end
 
-local function read_object(s, i, set)
+local function read_object(p, i, set)
   local row, col = {}, 0
-  i = skip(s, i + 1)
-  while s:byte(i) ~= 125 do
-    if s:byte(i) ~= 34 then
-      fail(i, "expected a column name")
+  i = skip(p, i + 1)
+  while byte_at(p, i) ~= 125 do
+    if p.s:byte(i) ~= 34 then
+      fail(p.base + i, "expected a column name")
     end
-    local name, nexti = read_string(s, i)
-    i = skip(s, nexti)
-    if s:byte(i) ~= 58 then
-      fail(i, "expected ':'")
+    local name, nexti = read_string(p, i)
+    i = skip(p, nexti)
+    if byte_at(p, i) ~= 58 then
+      fail(p.base + i, "expected ':'")
     end
-    i = skip(s, i + 1)
+    i = skip(p, i + 1)
     local value, numeric
-    value, numeric, i = read_value(s, i)
+    value, numeric, i = read_value(p, i)
     col = col + 1
     if not set.columns[col] then
       set.columns[col] = name
@@ -1505,65 +1645,164 @@ local function read_object(s, i, set)
       set.numeric[col] = false
     end
     row[col] = value
-    i = skip(s, i)
+    i = skip(p, i)
   end
   return row, i + 1
 end
 
-local function read_array(s, i, limit)
-  local set = { columns = {}, numeric = {}, rows = {}, truncated = false }
-  i = skip(s, i + 1)
-  while s:byte(i) == 123 do
-    local row
-    row, i = read_object(s, i, set)
-    if #set.rows < limit then
-      set.rows[#set.rows + 1] = row
-    else
-      set.truncated = true
-    end
-    i = skip(s, i)
-  end
-  if s:byte(i) ~= 93 then
-    fail(i, "expected ']'")
-  end
-  return set, i + 1
-end
-
-local function parse(s, limit)
-  local sets, notes = {}, {}
-  local i = 1
-  local n = #s
-  while true do
-    local _, e = s:find("^%s*", i)
-    i = e + 1
-    if i > n then
+-- sqlite3 -json prints one row per line, and escapes the control characters
+-- in strings, so a line ending in "}," or "}]" is exactly one row. Rows past
+-- the limit are only counted, which this does without reading their values.
+-- Returns the position after the rows it skipped.
+local function skip_rows(p, i, set)
+  local s = p.s
+  while p.set do
+    local nl = s:find("\n", i, true)
+    if not nl then
       break
     end
-    if s:byte(i) == 91 then
-      local set
-      set, i = read_array(s, i, limit)
-      sets[#sets + 1] = set
-    else
-      local j = s:find("\n", i, true) or n + 1
-      notes[#notes + 1] = s:sub(i, j - 1)
-      i = j + 1
+    local k = nl - 1
+    local b = s:byte(k)
+    while b == 32 or b == 13 do
+      k = k - 1
+      b = s:byte(k)
     end
+    if (b ~= 44 and b ~= 93) or s:byte(k - 1) ~= 125 or s:byte(i) ~= 123 then
+      break
+    end
+    set.dropped = set.dropped + 1
+    if b == 93 then
+      p.set = nil
+    end
+    i = nl + 1
   end
-  return sets, notes
+  return i
 end
 
--- Returns sets, notes (lines that were not JSON, from dot-commands), or nil
--- and an error. Each set is { columns, numeric, rows, truncated }; a row is an
--- array of strings and NULL. Rows past limit are counted out as truncated.
-function M.parse(s, limit)
-  local ok, sets, notes = pcall(parse, s or "", limit or math.huge)
-  if not ok then
-    if type(sets) == "table" and sets.parse then
-      return nil, sets.message
+local function new_set()
+  return { columns = {}, numeric = {}, rows = {}, truncated = false, dropped = 0 }
+end
+
+-- Parses one item at p.i (a set's "[", a row, a set's "]", or a line of text
+-- outside the sets) and returns false at the end of the text.
+local function step(p)
+  local s, i = p.s, p.i
+  local set = p.set
+  if not set then
+    local _, e = s:find("^%s*", i)
+    i = e + 1
+    if i > #s then
+      p.i = i
+      return false
     end
-    return nil, tostring(sets)
+    if s:byte(i) == 91 then
+      set = new_set()
+      p.set = set
+      p.sets[#p.sets + 1] = set
+      p.i = i + 1
+      return true
+    end
+    local j = s:find("\n", i, true)
+    if not j then
+      if not p.final then
+        short(p, i)
+      end
+      j = #s + 1
+    end
+    p.notes[#p.notes + 1] = s:sub(i, j - 1)
+    p.i = j + 1
+    return true
   end
-  return sets, notes
+  i = skip(p, i)
+  local b = byte_at(p, i)
+  if b == 93 then
+    p.set = nil
+    p.i = i + 1
+    return true
+  end
+  if b ~= 123 then
+    fail(p.base + i, "expected '{' or ']'")
+  end
+  if #set.rows >= p.limit then
+    set.truncated = true
+    local nexti = skip_rows(p, i, set)
+    if nexti > i then
+      p.i = nexti
+      return true
+    end
+  end
+  local row
+  row, i = read_object(p, i, set)
+  if #set.rows < p.limit then
+    set.rows[#set.rows + 1] = row
+  else
+    set.dropped = set.dropped + 1
+  end
+  p.i = i
+  return true
+end
+
+local function run(p)
+  while not p.err do
+    local i = p.i
+    local ok, res = pcall(step, p)
+    if not ok then
+      p.i = i
+      if res ~= MORE then
+        p.err = type(res) == "table" and res.message or tostring(res)
+      end
+      return
+    end
+    if not res then
+      return
+    end
+  end
+end
+
+-- A parser for sqlite3 -json output that arrives in pieces: feed it each
+-- chunk, then finish. Rows past limit in a set are counted in dropped and set
+-- truncated.
+function M.stream(limit)
+  return { s = "", i = 1, base = 0, pending = {}, sets = {}, notes = {}, limit = limit or math.huge, final = false }
+end
+
+function M.feed(p, chunk)
+  if p.err then
+    return
+  end
+  if not chunk:find("\n", 1, true) then
+    p.pending[#p.pending + 1] = chunk
+    return
+  end
+  p.pending[#p.pending + 1] = chunk
+  p.base = p.base + p.i - 1
+  p.s = p.s:sub(p.i) .. table.concat(p.pending)
+  p.pending = {}
+  p.i = 1
+  run(p)
+end
+
+-- complete is false when the output was cut short (cancelled, timed out,
+-- capped): what is left is an incomplete row and is dropped. Returns sets
+-- and notes (lines that were not JSON, from dot-commands), or nil and an
+-- error. Each set is { columns, numeric, rows, truncated, dropped }; a row is
+-- an array of strings and NULL.
+function M.finish(p, complete)
+  if complete and not p.err then
+    p.base = p.base + p.i - 1
+    p.s = p.s:sub(p.i) .. table.concat(p.pending)
+    p.pending = {}
+    p.i = 1
+    p.final = true
+    run(p)
+    if not p.err and p.set then
+      p.err = "unexpected end of sqlite3 output"
+    end
+  end
+  if p.err then
+    return nil, p.err
+  end
+  return p.sets, p.notes
 end
 
 -- Rows as tables keyed by column name, for queries the plugin writes itself.
@@ -1631,7 +1870,7 @@ local function attach_args(db, write)
   return args
 end
 
-local function build_args(db, opts)
+function M.build_args(db, opts)
   local args = {}
   if noinit then
     args[#args + 1] = "-noinit"
@@ -1651,74 +1890,157 @@ local function build_args(db, opts)
   return args
 end
 
-local function friendly(err)
+-- A read-only run stops with this error at the first statement that writes,
+-- before it changes anything.
+function M.refused_write(err)
+  return err ~= nil and err:find("attempt to write a readonly database", 1, true) ~= nil
+end
+
+local function friendly(err, binary)
   err = U.trim(err)
+  binary = binary or S.binary()
   if err:find("executable file not found", 1, true) or err:find("no such file or directory", 1, true) then
-    return "sqlite3 not found: " .. S.binary() .. " (see SQLite: Settings…)"
+    return "sqlite3 not found: " .. binary .. " (see SQLite: Settings…)"
   end
   if err:find("permission denied: system.exec", 1, true) then
-    return "Not in system.exec in plugin.ttt.json: " .. S.binary()
+    if binary:sub(1, 1) == "/" then
+      return binary .. " is not approved: save it in SQLite: Settings… to approve it"
+    end
+    return "Only sqlite3 on PATH or the absolute path of a sqlite3 binary can run, not " .. binary
   end
   return err
 end
 
-local function finished(db, sql, opts, cb, started, result)
+local function timeout_ms(opts)
+  if opts.timeout_ms == nil then
+    return S.CATALOG_TIMEOUT_MS
+  end
+  return opts.timeout_ms
+end
+
+local function on_chunk(parser, opts, chunk)
+  R.feed(parser, chunk)
+  if opts.on_progress then
+    opts.on_progress(parser.sets)
+  end
+end
+
+local function stopped_err(opts, result)
+  if result.cancelled then
+    return "Cancelled"
+  elseif result.timed_out then
+    return "Timed out after " .. U.duration(timeout_ms(opts))
+  end
+  return "Stopped reading after " .. U.bytes(opts.max_bytes or S.OUTPUT_LIMIT) .. " of output"
+end
+
+local start
+
+local function finished(job, db, sql, opts, cb, parser, result)
   local stderr = result.stderr or ""
   if noinit and stderr:find("-noinit", 1, true) and stderr:find("unknown option", 1, true) then
     noinit = false
-    return M.run(db, sql, opts, cb)
+    return start(job, db, sql, opts, cb)
   end
-  local elapsed = os.clock() - started
-  if result.exit_code == -1 then
-    return cb(friendly(stderr), {}, { elapsed = elapsed })
+  job.done = true
+  local stopped = result.cancelled or result.timed_out or result.truncated
+  local info = {
+    elapsed = os.clock() - job.started,
+    exit_code = result.exit_code,
+    cancelled = result.cancelled,
+    timed_out = result.timed_out,
+    truncated = result.truncated,
+    timeout_ms = timeout_ms(opts),
+    stderr = (result.cancelled or result.timed_out) and "" or U.trim(stderr),
+  }
+  if result.exit_code == -1 and not stopped then
+    return cb(friendly(stderr), {}, info)
   end
-  local sets, notes = R.parse(result.stdout, opts.limit)
+  local sets, notes = R.finish(parser, not stopped)
   if not sets then
-    return cb(notes, {}, { elapsed = elapsed })
+    return cb(notes, {}, info)
   end
-  local err = U.trim(stderr)
-  if err == "" and result.exit_code ~= 0 then
+  info.notes = notes
+  local err = info.stderr
+  if stopped then
+    err = err ~= "" and err or stopped_err(opts, result)
+  elseif err == "" and result.exit_code ~= 0 then
     err = "sqlite3 exited with code " .. tostring(result.exit_code)
   end
-  cb(err ~= "" and err or nil, sets, { elapsed = elapsed, notes = notes, exit_code = result.exit_code })
+  cb(err ~= "" and err or nil, sets, info)
 end
 
--- cb(err, sets, info): err is sqlite3's stderr when it printed anything; the
--- sets that ran before an error are still passed. opts: write (open
--- read-write), bail (stop at the first error, default true), limit (rows kept
--- per set).
+start = function(job, db, sql, opts, cb)
+  local parser = R.stream(opts.limit)
+  local exec_opts = {
+    stdin = sql .. "\n",
+    max_output_bytes = opts.max_bytes or S.OUTPUT_LIMIT,
+    on_stdout = U.bind(on_chunk, parser, opts),
+  }
+  local ms = timeout_ms(opts)
+  if ms > 0 then
+    exec_opts.timeout_ms = ms
+  end
+  job.started = os.clock()
+  local handle, err =
+    sys.exec_async(S.binary(), M.build_args(db, opts), exec_opts, U.bind(finished, job, db, sql, opts, cb, parser))
+  if err then
+    job.done = true
+    return cb(friendly(err), {}, {})
+  end
+  job.handle = handle
+end
+
+-- cb(err, sets, info): err is sqlite3's stderr when it printed anything, or
+-- why it stopped; the sets that arrived before are still passed. info has
+-- elapsed, notes, stderr, and cancelled, timed_out or truncated (the output
+-- passed max_bytes) when sqlite3 was stopped. opts: write (open read-write),
+-- bail (stop at the first error, default true), limit (rows kept per set),
+-- timeout_ms (0 for none, default the catalog timeout), max_bytes,
+-- on_progress(sets). Returns a job for M.cancel.
 function M.run(db, sql, opts, cb)
   opts = opts or {}
+  local job = { done = false }
   if not sys.exec_async then
-    return cb("This plugin needs the system.exec permission to run sqlite3", {}, {})
+    job.done = true
+    cb("This plugin needs the system.exec permission to run sqlite3", {}, {})
+    return job
   end
-  local started = os.clock()
-  local _, err = sys.exec_async(
-    S.binary(),
-    build_args(db, opts),
-    { stdin = sql .. "\n" },
-    U.bind(finished, db, sql, opts, cb, started)
-  )
-  if err then
-    cb(friendly(err), {}, {})
-  end
+  start(job, db, sql, opts, cb)
+  return job
 end
 
-local function version_done(cb, result)
+function M.cancel(job)
+  if not job or job.done or not job.handle then
+    return false
+  end
+  return job.handle:cancel()
+end
+
+local function version_done(binary, cb, result)
   local out = U.trim(result.stdout)
+  if result.timed_out then
+    return cb(binary .. " -version did not answer in " .. U.duration(S.VERSION_TIMEOUT_MS))
+  end
   if result.exit_code ~= 0 or out == "" then
-    return cb(friendly(result.stderr ~= "" and result.stderr or "sqlite3 -version failed"))
+    return cb(friendly(result.stderr ~= "" and result.stderr or "sqlite3 -version failed", binary))
   end
   cb(nil, out:match("^(%S+)") or out)
 end
 
-function M.version(cb)
+-- cb(err, version, denied): denied when ttt has not approved running binary.
+function M.version(binary, cb)
   if not sys.exec_async then
     return cb("This plugin needs the system.exec permission to run sqlite3")
   end
-  local _, err = sys.exec_async(S.binary(), { "-version" }, U.bind(version_done, cb))
+  local _, err = sys.exec_async(
+    binary,
+    { "-version" },
+    { timeout_ms = S.VERSION_TIMEOUT_MS },
+    U.bind(version_done, binary, cb)
+  )
   if err then
-    cb(friendly(err))
+    cb(friendly(err, binary), nil, err:find("permission denied", 1, true) ~= nil)
   end
 end
 
@@ -1736,7 +2058,12 @@ S.DEFAULTS = {
   page_size = 50,
   count_limit_mib = 64,
   query_row_limit = 5000,
+  query_timeout_s = 300,
 }
+
+S.CATALOG_TIMEOUT_MS = 30000
+S.VERSION_TIMEOUT_MS = 10000
+S.OUTPUT_LIMIT = 64 * 1024 * 1024
 
 S.settings = storage.get("settings") or {}
 for k, v in pairs(S.DEFAULTS) do
@@ -1756,6 +2083,11 @@ end
 
 function S.page_size()
   return tonumber(S.settings.page_size) or S.DEFAULTS.page_size
+end
+
+function S.query_timeout_ms()
+  local s = tonumber(S.settings.query_timeout_s) or S.DEFAULTS.query_timeout_s
+  return math.max(s, 0) * 1000
 end
 
 function S.binary()
@@ -1971,6 +2303,16 @@ function U.ms(seconds)
   return string.format("%.2f s", ms / 1000)
 end
 
+function U.duration(ms)
+  local s = math.floor((ms or 0) / 1000)
+  if s < 60 then
+    return U.plural(s, "second")
+  elseif s < 3600 then
+    return U.plural(math.floor(s / 60), "minute")
+  end
+  return U.plural(math.floor(s / 3600), "hour")
+end
+
 -- Bound arguments come first, then the caller's.
 function U.bind(fn, ...)
   local bound = { n = select("#", ...), ... }
@@ -2129,16 +2471,11 @@ function M.page(db)
   }
 end
 
-local function render_file(tab, page, p)
-  Router.render_page(tab, page, p)
-end
-
 -- The file handler: a .db file from the explorer opens its overview, and
 -- becomes the database the sidebar shows.
 function M.open_file(path, tab)
   local db = Db.open(path)
-  local state = { id = "file:" .. path }
-  tab.render = U.bind(render_file, state, M.page(db))
+  tab.render = U.bind(Router.render_file, Router.adopt_file(tab.id, M.page(db)))
 end
 
 return M
@@ -2172,23 +2509,34 @@ local function sql_input(p, q)
   })
 end
 
-local function summary(q)
-  if q.running then
-    return "Running…", "muted"
+local function rows_text(q, set)
+  local n = #set.rows
+  if set.truncated then
+    if q.stopped then
+      return "first " .. U.count(n) .. " rows shown"
+    end
+    return "first " .. U.count(n) .. " of " .. U.count(n + set.dropped) .. " rows shown"
   end
-  if q.notice then
-    return q.notice, "warning"
+  return U.plural(n, "row") .. (q.stopped and " received" or "")
+end
+
+local function stats(q)
+  if q.running then
+    local parts = { U.ms(os.clock() - q.started) }
+    if q.received > 0 then
+      parts[#parts + 1] = U.plural(q.received, "row") .. " so far"
+    end
+    return table.concat(parts, " · ")
   end
   if not q.ran then
-    return "", "muted"
+    return ""
   end
   local parts = {}
   local set = q.sets[q.active]
   if set then
-    local n = #set.rows
-    parts[#parts + 1] = U.plural(n, "row") .. (set.truncated and " (more not shown)" or "")
-  else
-    parts[#parts + 1] = q.err and "Failed" or "No rows"
+    parts[#parts + 1] = rows_text(q, set)
+  elseif not q.stopped and not q.err then
+    parts[#parts + 1] = "No rows"
   end
   if q.changes and q.changes > 0 then
     parts[#parts + 1] = U.plural(q.changes, "row") .. " changed"
@@ -2197,18 +2545,48 @@ local function summary(q)
   if q.wrote then
     parts[#parts + 1] = "read-write"
   end
-  return table.concat(parts, " · "), q.err and "danger" or "muted"
+  return table.concat(parts, " · ")
+end
+
+-- The headline of the last run, when it is not the plain row count.
+local function status(q)
+  if q.running then
+    return "Running…", "muted"
+  elseif q.notice then
+    return q.notice, "warning"
+  elseif q.stopped == "cancelled" then
+    return "Cancelled", "warning"
+  elseif q.stopped == "timed_out" then
+    return "Timed out after " .. U.duration(q.timeout_ms), "danger"
+  elseif q.stopped == "truncated" then
+    return "Output passed " .. U.bytes(S.OUTPUT_LIMIT) .. ", sqlite3 stopped", "warning"
+  elseif q.ran and q.err then
+    return "Failed", "danger"
+  end
 end
 
 local function run(q)
   Store.run(q)
 end
 
+local function status_row(q, h)
+  local text, style = status(q)
+  local detail = stats(q)
+  if text then
+    h:label({ text = text, style = style, width = U.width(text) })
+    detail = detail ~= "" and ("· " .. detail) or ""
+  end
+  h:label({ text = detail, style = "muted" })
+end
+
 local function toolbar(q, h)
-  h:button({ label = q.running and "Running…" or "Run (F5)", disabled = q.running, on_click = U.bind(run, q) })
+  if q.running then
+    h:button({ label = "Cancel", on_click = U.bind(Store.cancel, q) })
+  else
+    h:button({ label = "Run (F5)", on_click = U.bind(run, q) })
+  end
   UI.checkbox(h, "Allow writes", q.write, U.bind(Store.set_write, q))
-  local text, style = summary(q)
-  h:label({ text = text, style = style, padding_left = 1 })
+  h:hstack({ height = 1, gap = 1, padding_left = 1, render = U.bind(status_row, q) })
 end
 
 local function error_lines(p, q)
@@ -2282,6 +2660,7 @@ end
 
 local function make_page(q)
   return {
+    on_close = U.bind(Store.dispose, q),
     title = "Query " .. q.n,
     trail = { q.db.name },
     tab_title = "Query " .. q.n .. " · " .. q.db.name,
@@ -2315,7 +2694,6 @@ local UI = require("components")
 local M = {}
 
 local MARK = "__ttt_sqlite_changes"
-local READONLY = "attempt to write a readonly database"
 
 M.count = 0
 
@@ -2352,12 +2730,45 @@ local function split_changes(sets)
   return nil
 end
 
+local function stop_ticker(q)
+  if q.ticker then
+    ttt.clear_interval(q.ticker)
+    q.ticker = nil
+  end
+end
+
+local function received(q, gen, sets)
+  if gen ~= q.gen then
+    return
+  end
+  local n = 0
+  for _, set in ipairs(sets) do
+    if set.columns[1] ~= MARK then
+      n = n + #set.rows + set.dropped
+    end
+  end
+  q.received = n
+end
+
+local function stop_reason(info)
+  if info.cancelled then
+    return "cancelled"
+  elseif info.timed_out then
+    return "timed_out"
+  elseif info.truncated then
+    return "truncated"
+  end
+end
+
 local function finished(q, gen, write, err, sets, info)
   if gen ~= q.gen then
     return
   end
   q.running = false
-  if err and not write and err:find(READONLY, 1, true) then
+  q.job = nil
+  stop_ticker(q)
+  local stopped = stop_reason(info)
+  if not write and not stopped and Sqlite.refused_write(err) then
     q.err = nil
     q.notice = "Stopped at a statement that writes; nothing was changed."
     S.redraw()
@@ -2365,7 +2776,13 @@ local function finished(q, gen, write, err, sets, info)
     return
   end
   q.ran = true
-  q.err = err
+  q.stopped = stopped
+  q.timeout_ms = info.timeout_ms
+  if stopped then
+    q.err = info.stderr ~= "" and info.stderr or nil
+  else
+    q.err = err
+  end
   q.changes = split_changes(sets)
   q.sets = sets
   q.notes = info.notes or {}
@@ -2380,27 +2797,51 @@ local function finished(q, gen, write, err, sets, info)
   S.redraw()
 end
 
-function M.run(q, write)
+local function tick(q)
   if q.running then
-    return
+    S.redraw()
+  else
+    stop_ticker(q)
   end
+end
+
+-- Running again while a run is in flight replaces it: the old sqlite3 is
+-- killed and its result, which still arrives, is dropped by the gen check.
+function M.run(q, write)
   if U.trim(q.sql) == "" then
     q.err = "Type some SQL first"
     S.redraw()
     return
   end
+  Sqlite.cancel(q.job)
   write = write == true or q.write
   q.gen = q.gen + 1
   q.running = true
+  q.started = os.clock()
+  q.received = 0
   q.err = nil
   q.notice = nil
+  stop_ticker(q)
+  q.ticker = ttt.set_interval(500, U.bind(tick, q))
+  q.job = Sqlite.run(q.db, script(q.sql), {
+    write = write,
+    limit = tonumber(S.settings.query_row_limit),
+    timeout_ms = S.query_timeout_ms(),
+    on_progress = U.bind(received, q, q.gen),
+  }, U.bind(finished, q, q.gen, write))
   S.redraw()
-  Sqlite.run(
-    q.db,
-    script(q.sql),
-    { write = write, limit = tonumber(S.settings.query_row_limit) },
-    U.bind(finished, q, q.gen, write)
-  )
+end
+
+function M.cancel(q)
+  Sqlite.cancel(q.job)
+end
+
+-- For a closed tab: nothing is left to show the result in.
+function M.dispose(q)
+  q.gen = q.gen + 1
+  stop_ticker(q)
+  Sqlite.cancel(q.job)
+  q.job = nil
 end
 
 function M.set_sql(q, text)
@@ -2792,7 +3233,12 @@ function M.load_data(tv, recount)
   local with_count = recount or d.counted ~= d.filter
   d.gen = d.gen + 1
   d.loading = true
-  Sqlite.run(tv.db, data_sql(tv, with_count), {}, U.bind(data_loaded, tv, d.gen, with_count))
+  Sqlite.run(
+    tv.db,
+    data_sql(tv, with_count),
+    { timeout_ms = S.query_timeout_ms() },
+    U.bind(data_loaded, tv, d.gen, with_count)
+  )
 end
 
 function M.ensure_data(tv)

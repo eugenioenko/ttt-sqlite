@@ -13,13 +13,6 @@
     "storage": true,
     "editor.file_handlers": true,
     "system.env": true,
-    "system.exec": [
-      "sqlite3",
-      "/usr/bin/sqlite3",
-      "/usr/local/bin/sqlite3",
-      "/opt/homebrew/bin/sqlite3",
-      "/opt/homebrew/opt/sqlite/bin/sqlite3",
-      "/usr/local/opt/sqlite/bin/sqlite3"
-    ]
+    "system.exec": ["sqlite3"]
   }
 }

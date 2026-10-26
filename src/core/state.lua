@@ -7,7 +7,12 @@ S.DEFAULTS = {
   page_size = 50,
   count_limit_mib = 64,
   query_row_limit = 5000,
+  query_timeout_s = 300,
 }
+
+S.CATALOG_TIMEOUT_MS = 30000
+S.VERSION_TIMEOUT_MS = 10000
+S.OUTPUT_LIMIT = 64 * 1024 * 1024
 
 S.settings = storage.get("settings") or {}
 for k, v in pairs(S.DEFAULTS) do
@@ -27,6 +32,11 @@ end
 
 function S.page_size()
   return tonumber(S.settings.page_size) or S.DEFAULTS.page_size
+end
+
+function S.query_timeout_ms()
+  local s = tonumber(S.settings.query_timeout_s) or S.DEFAULTS.query_timeout_s
+  return math.max(s, 0) * 1000
 end
 
 function S.binary()

@@ -138,16 +138,11 @@ function M.page(db)
   }
 end
 
-local function render_file(tab, page, p)
-  Router.render_page(tab, page, p)
-end
-
 -- The file handler: a .db file from the explorer opens its overview, and
 -- becomes the database the sidebar shows.
 function M.open_file(path, tab)
   local db = Db.open(path)
-  local state = { id = "file:" .. path }
-  tab.render = U.bind(render_file, state, M.page(db))
+  tab.render = U.bind(Router.render_file, Router.adopt_file(tab.id, M.page(db)))
 end
 
 return M

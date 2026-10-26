@@ -24,23 +24,34 @@ local function sql_input(p, q)
   })
 end
 
-local function summary(q)
-  if q.running then
-    return "Running…", "muted"
+local function rows_text(q, set)
+  local n = #set.rows
+  if set.truncated then
+    if q.stopped then
+      return "first " .. U.count(n) .. " rows shown"
+    end
+    return "first " .. U.count(n) .. " of " .. U.count(n + set.dropped) .. " rows shown"
   end
-  if q.notice then
-    return q.notice, "warning"
+  return U.plural(n, "row") .. (q.stopped and " received" or "")
+end
+
+local function stats(q)
+  if q.running then
+    local parts = { U.ms(os.clock() - q.started) }
+    if q.received > 0 then
+      parts[#parts + 1] = U.plural(q.received, "row") .. " so far"
+    end
+    return table.concat(parts, " · ")
   end
   if not q.ran then
-    return "", "muted"
+    return ""
   end
   local parts = {}
   local set = q.sets[q.active]
   if set then
-    local n = #set.rows
-    parts[#parts + 1] = U.plural(n, "row") .. (set.truncated and " (more not shown)" or "")
-  else
-    parts[#parts + 1] = q.err and "Failed" or "No rows"
+    parts[#parts + 1] = rows_text(q, set)
+  elseif not q.stopped and not q.err then
+    parts[#parts + 1] = "No rows"
   end
   if q.changes and q.changes > 0 then
     parts[#parts + 1] = U.plural(q.changes, "row") .. " changed"
@@ -49,18 +60,48 @@ local function summary(q)
   if q.wrote then
     parts[#parts + 1] = "read-write"
   end
-  return table.concat(parts, " · "), q.err and "danger" or "muted"
+  return table.concat(parts, " · ")
+end
+
+-- The headline of the last run, when it is not the plain row count.
+local function status(q)
+  if q.running then
+    return "Running…", "muted"
+  elseif q.notice then
+    return q.notice, "warning"
+  elseif q.stopped == "cancelled" then
+    return "Cancelled", "warning"
+  elseif q.stopped == "timed_out" then
+    return "Timed out after " .. U.duration(q.timeout_ms), "danger"
+  elseif q.stopped == "truncated" then
+    return "Output passed " .. U.bytes(S.OUTPUT_LIMIT) .. ", sqlite3 stopped", "warning"
+  elseif q.ran and q.err then
+    return "Failed", "danger"
+  end
 end
 
 local function run(q)
   Store.run(q)
 end
 
+local function status_row(q, h)
+  local text, style = status(q)
+  local detail = stats(q)
+  if text then
+    h:label({ text = text, style = style, width = U.width(text) })
+    detail = detail ~= "" and ("· " .. detail) or ""
+  end
+  h:label({ text = detail, style = "muted" })
+end
+
 local function toolbar(q, h)
-  h:button({ label = q.running and "Running…" or "Run (F5)", disabled = q.running, on_click = U.bind(run, q) })
+  if q.running then
+    h:button({ label = "Cancel", on_click = U.bind(Store.cancel, q) })
+  else
+    h:button({ label = "Run (F5)", on_click = U.bind(run, q) })
+  end
   UI.checkbox(h, "Allow writes", q.write, U.bind(Store.set_write, q))
-  local text, style = summary(q)
-  h:label({ text = text, style = style, padding_left = 1 })
+  h:hstack({ height = 1, gap = 1, padding_left = 1, render = U.bind(status_row, q) })
 end
 
 local function error_lines(p, q)
@@ -134,6 +175,7 @@ end
 
 local function make_page(q)
   return {
+    on_close = U.bind(Store.dispose, q),
     title = "Query " .. q.n,
     trail = { q.db.name },
     tab_title = "Query " .. q.n .. " · " .. q.db.name,

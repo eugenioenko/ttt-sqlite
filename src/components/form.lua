@@ -5,7 +5,7 @@ local Inputs = require("components.inputs")
 
 -- Forms from a field spec: { key, label, kind = "enum"|"multiline"|"readonly",
 -- options, value, placeholder, password, required, rows, show(vals) }, and
--- spec { fields, submit, busy_text, on_submit(vals, done), on_done }.
+-- spec { fields, submit, busy_text, err, on_submit(vals, done), on_done }.
 local M = {}
 
 function M.field_options(f)
@@ -46,7 +46,7 @@ local function submit(form)
 end
 
 function M.new_form(spec)
-  local form = { spec = spec, vals = {}, err = nil, busy = false }
+  local form = { spec = spec, vals = {}, err = spec.err, busy = false }
   for _, f in ipairs(spec.fields) do
     local v = f.value
     if v == nil and f.options then

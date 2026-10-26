@@ -159,6 +159,16 @@ function U.ms(seconds)
   return string.format("%.2f s", ms / 1000)
 end
 
+function U.duration(ms)
+  local s = math.floor((ms or 0) / 1000)
+  if s < 60 then
+    return U.plural(s, "second")
+  elseif s < 3600 then
+    return U.plural(math.floor(s / 60), "minute")
+  end
+  return U.plural(math.floor(s / 3600), "hour")
+end
+
 -- Bound arguments come first, then the caller's.
 function U.bind(fn, ...)
   local bound = { n = select("#", ...), ... }

@@ -199,7 +199,12 @@ function M.load_data(tv, recount)
   local with_count = recount or d.counted ~= d.filter
   d.gen = d.gen + 1
   d.loading = true
-  Sqlite.run(tv.db, data_sql(tv, with_count), {}, U.bind(data_loaded, tv, d.gen, with_count))
+  Sqlite.run(
+    tv.db,
+    data_sql(tv, with_count),
+    { timeout_ms = S.query_timeout_ms() },
+    U.bind(data_loaded, tv, d.gen, with_count)
+  )
 end
 
 function M.ensure_data(tv)

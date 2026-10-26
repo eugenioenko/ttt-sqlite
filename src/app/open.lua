@@ -5,6 +5,7 @@ local Db = require("core.db")
 local Sqlite = require("core.sqlite")
 local UI = require("components")
 local Paths = require("app.paths")
+local Router = require("app.router")
 
 -- The Open Database dialog: a path, or one of the recent files.
 local M = {}
@@ -18,7 +19,9 @@ local function opened(path, done, err)
   done()
   Db.open(path)
   ttt.show_panel("sidebar")
-  ttt.open_file(path)
+  if not Router.focus_file(path) then
+    ttt.open_file(path)
+  end
 end
 
 local function checked(path, done, err)
