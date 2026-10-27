@@ -51,9 +51,11 @@ Opening a database that is already open switches to its tab. **SQLite: Close Dat
 |---------------|------|
 | F5 or **Run** | Run the SQL. Running again while a query runs stops it and starts over. |
 | **Cancel** | Stop the running query. Rows that already arrived stay on screen, marked **Cancelled**. Closing the tab cancels too. |
-| **View** or Enter on a row | Show every column of the row. Escape or **Close** closes it. |
+| **View** or Enter on a row | Open every column of the row in a read-only editor tab for searching, selecting and copying. Close the tab as usual. |
 | Left and Right, Shift+wheel | Scroll wide results sideways: the arrows jump a column. |
 | Tab and Shift+Tab | Move between the editor, buttons and the results. |
+
+Row tabs align field names and values without colons, with multiline values continuing under the value column. `NULL` and empty strings (`""`) are distinct. Each tab is a snapshot of the row when it was opened.
 
 A script with several `SELECT`s shows one result tab per statement. Blobs show as `<blob N bytes>` in the Data tab; in a query, select `hex(col)` to see one. Errors from `sqlite3` show in red below the results of the statements that ran before them.
 

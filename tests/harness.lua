@@ -1,6 +1,7 @@
 -- Loads src/ modules the way scripts/build.py bundles them, with small stand-ins
 -- for the ttt modules they require, and runs every tests/*_test.lua.
 local stubs = {}
+stubs["ttt"] = {}
 
 local function utf8_len(s)
   local _, n = tostring(s):gsub("[^\128-\191]", "")

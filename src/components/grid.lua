@@ -2,7 +2,6 @@ local ttt = require("ttt")
 local U = require("core.util")
 local S = require("core.state")
 local R = require("core.results")
-local Dialog = require("components.dialog")
 
 local M = {}
 
@@ -16,7 +15,7 @@ function M.new_grid()
 end
 
 -- sqlite3 -json prints reals with 17 digits (864.7859999999999); the row
--- dialog keeps them exact, the grid shows them like sqlite3's other modes.
+-- tab keeps them exact, the grid shows them like sqlite3's other modes.
 function M.cell(v, numeric)
   if v == nil or v == R.NULL then
     return "NULL"
@@ -49,34 +48,33 @@ local function select_row(g, i)
   g.sel = i
 end
 
-local function detail_entries(columns, row)
-  local out = { padding_left = 1, muted_keys = true }
-  for c, name in ipairs(columns) do
-    local v = row[c]
-    out[#out + 1] = { key = name, value = (v == nil or v == R.NULL) and "NULL" or U.one_line(v) }
+function M.row_lines(columns, row)
+  local key_width = 0
+  for _, name in ipairs(columns) do
+    key_width = math.max(key_width, U.width(name))
   end
-  return out
-end
-
-local function close_button(h)
-  h:button({ label = "Close", style = "bracket", on_click = ttt.close_dialog })
-end
-
-local function detail_body(columns, row, rows, p)
-  p:scrollview({ height = rows, render = U.bind(M.keyvalue_rows, columns, row) })
-  p:hstack({ height = 1, margin_top = 1, align = "right", render = close_button })
-end
-
-function M.keyvalue_rows(columns, row, p)
-  p:keyvalue(detail_entries(columns, row))
+  local indent = string.rep(" ", key_width + 2)
+  local lines = {}
+  for c, name in ipairs(columns) do
+    local value = row[c]
+    if value == nil or value == R.NULL then
+      value = "NULL"
+    elseif value == "" then
+      value = '""'
+    end
+    local prefix = name .. string.rep(" ", key_width - U.width(name) + 2)
+    for n, line in ipairs(U.lines((value:gsub("\r\n", "\n")))) do
+      lines[#lines + 1] = (n == 1 and prefix or indent) .. line
+    end
+  end
+  return lines
 end
 
 function M.show_row(title, columns, row)
   if not row then
     return
   end
-  local rows = math.min(#columns + 1, 26)
-  Dialog.open_dialog(title, 90, rows + 2, U.bind(detail_body, columns, row, rows))
+  ttt.open_readonly(title, M.row_lines(columns, row))
 end
 
 local function activate_row(g, opts, i)
